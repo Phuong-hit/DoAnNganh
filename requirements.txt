@@ -1,0 +1,8 @@
+numpy>=1.24
+opencv-python>=4.8
+pandas>=2.0
+pyyaml>=6.0
+flask>=3.0
+
+# Pose thật (pose.backend: yolo). Không cần nếu chỉ chạy thử với pose.backend=dummy.
+ultralytics>=8.1

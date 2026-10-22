@@ -1,0 +1,387 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fall Web</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --text: #1d2330; --muted: #657085; --line: #dde2ea;
+    --accent: #1f6feb; --accent-text: #ffffff; --ok: #1a7f37; --warn: #b35900; --bad: #c62828;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12151b; --panel: #1b2029; --text: #e6e9ef; --muted: #98a2b3; --line: #2c3340;
+      --accent: #4c8dff; --accent-text: #0d1117; --ok: #4ac26b; --warn: #e3a248; --bad: #ff6b6b;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 14px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  header { padding: 14px 20px; border-bottom: 1px solid var(--line); background: var(--panel);
+           display: flex; flex-wrap: wrap; gap: 8px 24px; align-items: baseline; }
+  header h1 { font-size: 17px; margin: 0; }
+  header span { color: var(--muted); font-size: 13px; min-width: 0; }
+  main { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 16px; padding: 16px 20px; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; padding: 12px 16px; } }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px; min-width: 0; }
+  h2 { font-size: 14px; margin: 0 0 10px; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 10px; }
+  input[type=text] { flex: 1 1 220px; min-width: 0; padding: 7px 9px; border: 1px solid var(--line);
+                     border-radius: 6px; background: var(--bg); color: var(--text); }
+  button { padding: 7px 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg);
+           color: var(--text); cursor: pointer; }
+  button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+  button.small { padding: 2px 8px; font-size: 12px; }
+  .viewer { background: #000; border-radius: 6px; aspect-ratio: 4 / 3; display: grid; place-items: center; overflow: hidden; }
+  .viewer img { width: 100%; height: 100%; object-fit: contain; }
+  .viewer .ph { color: #8b93a3; font-size: 13px; padding: 12px; text-align: center; }
+  .viewer.is-player { aspect-ratio: auto; display: block; background: transparent; }
+  .player { position: relative; background: #000; border-radius: 6px; overflow: hidden; }
+  .player video { display: block; width: 100%; height: auto; }
+  .player canvas { position: absolute; left: 0; top: 0; width: 100%; height: 100%; pointer-events: none; }
+  .stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 8px; margin-top: 10px; }
+  .stat { border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; min-width: 0; }
+  .stat b { display: block; font-size: 16px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+  .stat small { color: var(--muted); }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 6px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+  th { color: var(--muted); font-weight: 600; }
+  .scroll { overflow-x: auto; max-height: 420px; overflow-y: auto; }
+  .tag { display: inline-block; padding: 0 6px; border-radius: 4px; font-size: 12px; border: 1px solid var(--line); }
+  .fall { color: var(--bad); } .adl { color: var(--ok); }
+  .yes { color: var(--ok); } .no { color: var(--muted); }
+  a { color: var(--accent); }
+  .muted { color: var(--muted); }
+  code { font-size: 12px; word-break: break-all; }
+  .log { font-size: 12px; max-height: 200px; overflow: auto; white-space: pre-wrap; color: var(--muted); }
+  .note { font-size: 12px; color: var(--muted); margin-top: 6px; }
+  .statusbar { display: flex; flex-wrap: wrap; gap: 6px 18px; align-items: center; padding: 8px 20px;
+               background: var(--panel); border-bottom: 1px solid var(--line); font-size: 13px; }
+  .statusbar b { font-variant-numeric: tabular-nums; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 6px; background: var(--muted); }
+  .dot.busy { background: var(--accent); } .dot.idle { background: var(--ok); }
+  .switch { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; }
+  .report { font-size: 12px; margin-top: 8px; border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; display: none; }
+  .report.show { display: block; }
+  .report ul { margin: 6px 0 0; padding-left: 18px; }
+  .bad { color: var(--bad); } .warn { color: var(--warn); } .good { color: var(--ok); }
+  .job { margin-bottom: 8px; }
+  .bar { height: 4px; background: var(--line); border-radius: 2px; overflow: hidden; margin: 3px 0; }
+  .bar > i { display: block; height: 100%; background: var(--accent); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Fall Web</h1>
+  <span>Pose: <b>{{ pose_tag }}</b> ({{ backend }}) · conf {{ conf }}</span>
+  <span>Lấy mẫu: {{ target_fps or "native" }} fps · SkeletonFilter khi trích: <b>{{ "bật" if filter_on else "tắt" }}</b></span>
+  <span>CSV lưu tại <code>{{ out_dir }}</code></span>
+</header>
+<div class="statusbar">
+  <span><span class="dot" id="dot"></span><span id="st-status">đang tải...</span></span>
+  <span>FPS: <b id="st-fps">-</b></span>
+  <span>Khung hình đã xử lý: <b id="st-frames">-</b></span>
+  <span>Video: <b id="st-videos">-</b> · có skeleton: <b id="st-sk">-</b></span>
+  <span>Thời gian chạy: <b id="st-uptime">-</b></span>
+</div>
+<main>
+  <section>
+    <h2>Xem trực tiếp</h2>
+    <div class="row">
+      <input type="text" id="source" placeholder="video_id, đường dẫn file, 0 (webcam) hoặc rtsp://...">
+      <button class="primary" onclick="startLive()">Xem</button>
+      <button onclick="stopLive()">Dừng</button>
+      <button onclick="extract(document.getElementById('source').value)">Trích skeleton</button>
+    </div>
+    <div class="row">
+      <label class="switch"><input type="checkbox" id="showSkel" checked onchange="toggleSkeleton()"> Hiện skeleton</label>
+      <label class="switch" title="Chỉ áp dụng khi xem trực tiếp. CSV trích ra theo cấu hình filter.enabled">
+        <input type="checkbox" id="useFilter" {{ "checked" if filter_on else "" }} onchange="toggleFilter()"> Làm mượt (SkeletonFilter)</label>
+    </div>
+    <div class="viewer" id="viewer"><div class="ph">Chọn một video ở bảng bên phải hoặc nhập nguồn rồi bấm Xem.</div></div>
+    <div class="note" id="vnote"></div>
+    <div class="stats" id="stats"></div>
+    <div class="report" id="report"></div>
+  </section>
+
+  <section>
+    <h2>Video trong metadata</h2>
+    <div class="row">
+      <button onclick="scan()">Quét video</button>
+      <button onclick="extract('all')">Trích tất cả</button>
+      <label class="muted"><input type="checkbox" id="overwrite"> chạy lại cả video đã có</label>
+      <button onclick="loadVideos()">Làm mới</button>
+    </div>
+    <div class="report" id="scanReport"></div>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>video_id</th><th>Nhãn</th><th>Giây</th><th>Skeleton</th><th>Tệp / kiểm tra</th></tr></thead>
+        <tbody id="videos"><tr><td colspan="5" class="muted">Đang tải...</td></tr></tbody>
+      </table>
+    </div>
+    <h2 style="margin-top:14px">Tiến độ trích xuất <a href="/download/_extract_summary.csv" class="muted" style="font-weight:400;font-size:12px">tải bảng tóm tắt</a></h2>
+    <div id="jobs" class="log">Chưa có.</div>
+  </section>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+const EDGES = {{ edges|tojson }};
+const CONF = {{ draw_conf|tojson }};
+let liveTimer = null;
+let videoIds = new Set();      // video có trong metadata -> phát bằng trình phát của trình duyệt
+let player = null;             // {id, video, canvas, ctx, skel, raf, lastIdx}
+const skelOn = () => $("showSkel").checked;
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
+const statHtml = (items) => items.map(([k, v]) => `<div class="stat"><small>${k}</small><b>${esc(v ?? "-")}</b></div>`).join("");
+
+function liveSource() {           // nguồn đang xem ở chế độ luồng (không phải trình phát)
+  const s = $("source").value.trim();
+  return !player && s && !videoIds.has(s) ? s : null;
+}
+function toggleSkeleton() {
+  if (player) { player.lastIdx = -1; return; }   // vòng vẽ tự cập nhật ở khung tiếp theo
+  const s = liveSource(); if (s) startLive(s);    // luồng: mở lại với tham số mới
+}
+function toggleFilter() {
+  if (player) {
+    $("vnote").textContent = "Trình phát vẽ đúng CSV đã trích; bật/tắt làm mượt chỉ áp dụng khi xem trực tiếp.";
+    return;
+  }
+  const s = liveSource(); if (s) startLive(s);
+}
+
+function fmtTime(sec) {
+  const s = Math.max(0, Math.floor(sec));
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
+  return h ? `${h}h${String(m).padStart(2, "0")}` : (m ? `${m}m${String(s % 60).padStart(2, "0")}s` : `${s}s`);
+}
+
+async function pollStatus() {
+  try {
+    const d = await (await fetch("/api/status")).json();
+    $("st-status").textContent = d.status + (d.detail ? ` · ${d.detail}` : "");
+    $("dot").className = "dot " + (d.status === "rảnh" ? "idle" : "busy");
+    $("st-fps").textContent = d.live_fps != null ? d.live_fps
+      : (player && player.skel ? `${d.target_fps ?? "?"} (skeleton)` : "-");
+    $("st-frames").textContent = d.total_frames;
+    $("st-videos").textContent = d.videos;
+    $("st-sk").textContent = d.skeletons;
+    $("st-uptime").textContent = fmtTime(d.uptime_s);
+  } catch (e) { $("st-status").textContent = "mất kết nối tới server"; $("dot").className = "dot"; }
+}
+
+async function checkCsv(id) {
+  const box = $("report");
+  box.className = "report show";
+  box.innerHTML = `Đang kiểm tra <b>${esc(id)}</b>...`;
+  const d = await (await fetch("/api/check/" + id)).json();
+  if (d.error) { box.innerHTML = `<span class="bad">${esc(id)}: ${esc(d.error)}</span>`; return; }
+  const verdict = d.ok ? '<span class="good">CSV dùng được cho xử lý chuỗi.</span>'
+                       : '<span class="bad">CSV chưa dùng được cho xử lý chuỗi.</span>';
+  const info = Object.entries(d.info).map(([k, v]) => `${k.replace(/_/g, " ")}=${v}`).join(" · ");
+  const list = [...d.errors.map(m => `<li class="bad">${esc(m)}</li>`),
+                ...d.warnings.map(m => `<li class="warn">${esc(m)}</li>`)].join("");
+  box.innerHTML = `<b>${esc(id)}</b> — ${verdict}<div class="muted">${esc(info)}</div>` + (list ? `<ul>${list}</ul>` : "");
+}
+
+function startLive(src) {
+  const s = src ?? $("source").value.trim();
+  if (!s) return;
+  $("source").value = s;
+  if (videoIds.has(s)) return showVideo(s);
+  stopPlayer();
+  $("viewer").className = "viewer";
+  $("viewer").innerHTML = "";
+  $("vnote").textContent = "";
+  $("stats").innerHTML = "";
+  const img = new Image();
+  img.src = "/stream?source=" + encodeURIComponent(s) + "&skeleton=" + (skelOn() ? 1 : 0)
+          + "&filter=" + ($("useFilter").checked ? 1 : 0) + "&_=" + Date.now();
+  img.alt = "live";
+  $("viewer").appendChild(img);
+  clearInterval(liveTimer);
+  liveTimer = setInterval(pollLive, 700);
+}
+
+async function stopLive() {
+  if (player) { player.video.pause(); return; }   // trình phát: chỉ tạm dừng, giữ nguyên hình
+  await fetch("/api/stop", {method: "POST"});
+  clearInterval(liveTimer);
+  $("viewer").className = "viewer";
+  $("viewer").innerHTML = '<div class="ph">Đã dừng.</div>';
+}
+
+function stopPlayer() {
+  if (!player) return;
+  cancelAnimationFrame(player.raf);
+  player.video.pause();
+  player = null;
+}
+
+function frameIndex(t, time) {          // chỉ số khung có t lớn nhất mà t <= time (tìm nhị phân)
+  let lo = 0, hi = t.length - 1, ans = 0;
+  while (lo <= hi) {
+    const m = (lo + hi) >> 1;
+    if (t[m] <= time) { ans = m; lo = m + 1; } else { hi = m - 1; }
+  }
+  return ans;
+}
+
+// Cùng quy tắc với SkeletonDraw: chỉ vẽ khớp có tọa độ (khác null) và conf >= CONF.
+function drawPose(ctx, w, h, kp, valid) {
+  ctx.clearRect(0, 0, w, h);
+  if (!valid) return;
+  const p = kp.map(([x, y, c]) => (x == null || y == null || c == null || c < CONF) ? null : [x * w, y * h]);
+  ctx.lineWidth = Math.max(2, w / 300);
+  ctx.strokeStyle = "#00e05a";
+  for (const [a, b] of EDGES) {
+    if (!p[a] || !p[b]) continue;
+    ctx.beginPath(); ctx.moveTo(p[a][0], p[a][1]); ctx.lineTo(p[b][0], p[b][1]); ctx.stroke();
+  }
+  ctx.fillStyle = "#ff2d2d";
+  for (const q of p) {
+    if (!q) continue;
+    ctx.beginPath(); ctx.arc(q[0], q[1], Math.max(3, w / 200), 0, Math.PI * 2); ctx.fill();
+  }
+}
+
+async function showVideo(id) {
+  clearInterval(liveTimer);
+  await fetch("/api/stop", {method: "POST"});   // dừng luồng MJPEG nếu đang chạy
+  stopPlayer();
+  const viewer = $("viewer");
+  viewer.className = "viewer is-player";
+  viewer.innerHTML = `<div class="player"><video id="vid" controls preload="auto" src="/video/${id}"></video><canvas id="ov"></canvas></div>`;
+  const video = $("vid"), canvas = $("ov");
+  player = {id, video, canvas, ctx: canvas.getContext("2d"), skel: null, raf: 0, lastIdx: -1};
+  video.addEventListener("error", () => {
+    $("vnote").textContent = "Trình duyệt không phát được file này (thường do codec, ví dụ AVI/XVID). Video vẫn trích skeleton được; có thể xem bằng ô nguồn + Xem (luồng MJPEG).";
+  });
+  await loadSkeleton(id);
+  const loop = () => {
+    if (!player || player.video !== video) return;
+    const w = canvas.clientWidth, h = canvas.clientHeight;
+    if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; player.lastIdx = -1; }
+    const s = player.skel;
+    if (s && s.t.length) {
+      const i = frameIndex(s.t, video.currentTime);
+      if (i !== player.lastIdx) {
+        drawPose(player.ctx, w, h, s.joints[i], skelOn() && s.valid[i]);
+        player.lastIdx = i;
+        $("stats").innerHTML = statHtml([["t (s)", s.t[i].toFixed(2)], ["Có người", s.valid[i] ? "có" : "không"],
+                                         ["Khung skeleton", `${i + 1} / ${s.t.length}`]]);
+      }
+    }
+    player.raf = requestAnimationFrame(loop);
+  };
+  player.raf = requestAnimationFrame(loop);
+}
+
+async function loadSkeleton(id) {
+  const res = await fetch("/api/skeleton/" + id);
+  if (!player || player.id !== id) return;
+  if (!res.ok) {
+    player.skel = null;
+    $("vnote").textContent = "Chưa có skeleton cho video này, nên chỉ xem được video. Bấm \"trích\" ở bảng bên phải để vẽ khung xương.";
+    $("stats").innerHTML = "";
+    return;
+  }
+  player.skel = await res.json();
+  player.lastIdx = -1;
+  $("vnote").textContent = "Khung xương vẽ theo CSV đã trích. Tua hoặc tạm dừng bằng thanh điều khiển của video.";
+}
+
+async function pollLive() {
+  const d = await (await fetch("/api/live")).json();
+  if (d.error) { $("stats").innerHTML = statHtml([["Lỗi", d.error]]); clearInterval(liveTimer); return; }
+  if (!d.frames) { $("stats").innerHTML = statHtml([["Trạng thái", "đang mở nguồn / nạp model..."]]); return; }
+  $("stats").innerHTML = statHtml([["t (s)", d.t], ["Có người", d.valid ? "có" : "không"], ["Pose (ms)", d.latency_ms],
+    ["Pose p95", d.pose_ms_p95], ["FPS đầu-cuối", d.e2e_fps], ["Khung", d.frames],
+    ["Tỉ lệ có người", d.valid_ratio], ["Làm mượt", d.filter ? "bật" : "tắt"]]);
+  if (d.finished) clearInterval(liveTimer);
+}
+
+async function loadVideos() {
+  const rows = await (await fetch("/api/videos")).json();
+  videoIds = new Set(rows.map(r => r.video_id));
+  if (!rows.length) {
+    $("videos").innerHTML = '<tr><td colspan="5" class="muted">Chưa có video. Chép video vào data/videos/fall và data/videos/adl rồi bấm "Quét video".</td></tr>';
+    return;
+  }
+  $("videos").innerHTML = rows.map(r => {
+    const id = esc(r.video_id);
+    const files = r.missing ? '<span class="bad">thiếu file</span>' : (r.has_skeleton
+      ? `<a href="/download/${id}.csv">csv</a> · <a href="/download/${id}.csv?format=long">dạng dài</a>
+         · <a href="#" onclick="checkCsv('${id}');return false">kiểm tra</a>
+         · <a href="#" onclick="extract('${id}', true);return false">trích lại</a>`
+      : `<a href="#" onclick="extract('${id}');return false">trích</a>`);
+    return `<tr>
+      <td><a href="#" onclick="startLive('${id}');return false">${id}</a></td>
+      <td><span class="tag ${esc(r.label)}">${esc(r.label)}</span></td>
+      <td>${r.duration_s ?? "-"}</td>
+      <td class="${r.has_skeleton ? "yes" : "no"}">${r.has_skeleton ? "có" : "chưa"}</td>
+      <td>${files}</td></tr>`;
+  }).join("");
+}
+
+async function scan() {
+  const box = $("scanReport");
+  box.className = "report show";
+  box.textContent = "Đang quét data/videos ...";
+  const d = await (await fetch("/api/scan", {method: "POST"})).json();
+  if (d.error) { box.innerHTML = `<span class="bad">${esc(d.error)}</span>`; return; }
+  const counts = Object.entries(d.counts).map(([k, v]) => `${k}: ${v}`).join(", ");
+  box.innerHTML = `Đã ghi metadata.csv: <b>${d.videos}</b> video${counts ? " (" + esc(counts) + ")" : ""}.` +
+    (d.problems.length ? `<div class="warn">${d.problems.length} vấn đề cần sửa tay trong metadata.csv:</div><ul>` +
+      d.problems.map(p => `<li class="warn">${esc(p)}</li>`).join("") + "</ul>" : ' <span class="good">Metadata hợp lệ.</span>');
+  loadVideos();
+}
+
+async function extract(target, force) {
+  const res = await fetch("/api/extract", {method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({source: target, overwrite: force || $("overwrite").checked})});
+  const d = await res.json();
+  if (d.error) { $("jobs").textContent = "Lỗi: " + d.error; return; }
+  pollJobs();
+}
+
+async function cancelJob(id) {
+  await fetch(`/api/jobs/${id}/cancel`, {method: "POST"});
+}
+
+function fmtResult(r) {
+  if (typeof r === "string") return r;
+  return `${r.frames} khung, có người ${Math.round(r.valid_ratio * 100)}%, mất ${Math.round(r.missing_ratio * 100)}%, ` +
+         `pose ${r.pose_ms_mean} ms, ${r.e2e_fps} fps`;
+}
+
+let jobsTimer = null;
+async function pollJobs() {
+  clearTimeout(jobsTimer);
+  const jobs = await (await fetch("/api/jobs")).json();
+  if (!jobs.length) return;
+  $("jobs").innerHTML = jobs.slice().reverse().map(j => {
+    const pct = j.cur_total ? Math.min(100, 100 * j.cur_frames / j.cur_total) : 0;
+    const head = `[${j.started}] ${j.status} ${j.done}/${j.total}` +
+      (j.current ? ` · đang chạy ${esc(j.current)} (${j.cur_frames}/${j.cur_total ?? "?"} khung)` : "");
+    const btn = j.status === "running" && !j.cancel ? ` <button class="small" onclick="cancelJob('${j.id}')">Hủy</button>` : "";
+    const bar = j.status === "running" ? `<div class="bar"><i style="width:${pct}%"></i></div>` : "";
+    const log = j.log.slice(-5).map(l => "  " + esc(l.video_id) + ": " + esc(fmtResult(l.result))).join("\n");
+    return `<div class="job">${head}${btn}${bar}${log}</div>`;
+  }).join("");
+  if (jobs.some(j => j.status === "running")) jobsTimer = setTimeout(pollJobs, 1000);
+  else {
+    loadVideos();
+    if (player) loadSkeleton(player.id);   // vừa trích xong: vẽ khung xương cho video đang xem
+  }
+}
+
+$("source").addEventListener("keydown", (e) => { if (e.key === "Enter") startLive(); });
+loadVideos();
+pollJobs();
+pollStatus();
+setInterval(pollStatus, 1500);
+</script>
+</body>
+</html>

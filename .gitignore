@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+.venv/
+output/
+data/metadata.csv
+data/videos/**/*
+!data/videos/**/.gitkeep
+models/*.pt
+models/*.onnx

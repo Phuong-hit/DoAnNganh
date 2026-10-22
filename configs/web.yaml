@@ -1,0 +1,41 @@
+# Cấu hình giao diện web. Ghi đè khi chạy: python run_web.py --set source.target_fps=15 --set pose.conf=0.3
+# Mọi đường dẫn tương đối tính từ thư mục gốc project.
+
+paths:
+  videos: data/videos            # chứa fall/ và adl/
+  metadata: data/metadata.csv    # sinh bởi nút "Quét video" (hoặc python run_web.py scan)
+  output: output                 # kết quả: output/<cấu hình>/csv/<video_id>.csv
+
+source:
+  target_fps: 10                 # FileSource / StreamSource lấy mẫu về FPS này (quy ước nhóm: 10)
+
+pose:
+  backend: yolo                  # yolo (YoloBackend của src/pose_estimate.py) | dummy (pose giả để test, không cần model)
+  model_path: models/yolov8n-pose.pt
+  conf: 0.4                      # ngưỡng phát hiện người (CONF trong HUONG_DAN)
+  device: null                   # null = để ultralytics tự chọn | cpu | cuda:0
+  kp_conf: 0.3                   # PoseEstimate: ngưỡng khớp tin cậy
+  min_valid_joints: 5            # PoseEstimate: ít hơn -> valid = False
+  track_iou: 0.1
+  lost_reset_frames: 30
+
+filter:
+  enabled: true                  # USE_FILTER: chạy SkeletonFilter trước khi ghi CSV / vẽ
+  alpha: 0.5
+  min_conf: 0.3
+  max_hold_frames: 3
+  history_size: 3
+  jump_ratio: 0.65
+  min_jump: 0.04
+  max_bone_ratio: 2.5
+  collapse_ratio: 0.5
+  max_gap_frames: 15
+
+draw:
+  min_conf: 0.3                  # SkeletonDraw + lớp vẽ trên trình phát
+
+check:                           # tham số kiểm tra CSV cho xử lý chuỗi
+  window_s: 2.0
+  stride_s: 0.25
+  kpt_conf_thres: 0.2
+  max_missing: 0.4
