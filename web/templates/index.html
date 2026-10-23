@@ -98,6 +98,8 @@
       <label class="switch"><input type="checkbox" id="showSkel" checked onchange="toggleSkeleton()"> Hiện skeleton</label>
       <label class="switch" title="Chỉ áp dụng khi xem trực tiếp. CSV trích ra theo cấu hình filter.enabled">
         <input type="checkbox" id="useFilter" {{ "checked" if filter_on else "" }} onchange="toggleFilter()"> Làm mượt (SkeletonFilter)</label>
+      <button id="btnFrames" class="small" onclick="downloadFrames()" disabled
+              title="Tạo một file ZIP chứa mọi khung của video, mỗi khung đã vẽ skeleton">Tải toàn bộ khung (ZIP)</button>
     </div>
     <div class="viewer" id="viewer"><div class="ph">Chọn một video ở bảng bên phải hoặc nhập nguồn rồi bấm Xem.</div></div>
     <div class="note" id="vnote"></div>
@@ -213,6 +215,7 @@ async function stopLive() {
 }
 
 function stopPlayer() {
+  $("btnFrames").disabled = true;
   if (!player) return;
   cancelAnimationFrame(player.raf);
   player.video.pause();
@@ -289,7 +292,36 @@ async function loadSkeleton(id) {
   }
   player.skel = await res.json();
   player.lastIdx = -1;
+  $("btnFrames").disabled = false;
   $("vnote").textContent = "Khung xương vẽ theo CSV đã trích. Tua hoặc tạm dừng bằng thanh điều khiển của video.";
+}
+
+async function downloadFrames() {
+  if (!player || !player.skel) return;
+  const id = player.id, btn = $("btnFrames");
+  btn.disabled = true;
+  $("vnote").textContent = "Đang tạo file ZIP chứa toàn bộ khung (đã vẽ skeleton). Video dài có thể mất vài chục giây...";
+  try {
+    const res = await fetch(`/frames/${id}.zip`);
+    if (!res.ok) {
+      const d = await res.json().catch(() => ({}));
+      $("vnote").textContent = "Lỗi: " + (d.error || res.statusText);
+      return;
+    }
+    const url = URL.createObjectURL(await res.blob());
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${id}_frames.zip`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+    $("vnote").textContent = `Đã tải ${id}_frames.zip.`;
+  } catch (e) {
+    $("vnote").textContent = "Lỗi khi tạo ZIP: " + e;
+  } finally {
+    btn.disabled = !(player && player.skel);
+  }
 }
 
 async function pollLive() {

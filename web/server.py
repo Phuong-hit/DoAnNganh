@@ -15,6 +15,7 @@ Chức năng (tương đương giao diện web của fall_app):
 """
 from __future__ import annotations
 
+import io
 import re
 import threading
 import time
@@ -32,6 +33,7 @@ from .config import resolve
 from .engine import (Cancelled, OpenedSource, Stats, build_drawer, build_estimator, build_filter,
                      config_tag, csv_dir, draw_hud, estimate, extract_to_csv, make_video_id,
                      output_dir, pose_tag)
+from .frames import build_frames_zip
 from .videos import load_metadata, scan_videos, validate
 
 ID_RE = re.compile(r"^[0-9A-Za-z_]+$")
@@ -379,5 +381,20 @@ def create_app(cfg: dict, check_model: bool = True) -> Flask:
         if not p.exists():
             abort(404)
         return send_file(p, as_attachment=True)
+
+    @app.get("/frames/<video_id>.zip")
+    def dl_frames(video_id):
+        # Tạo ZIP trong bộ nhớ từ video gốc + CSV hiện có. Video dài thì chậm và tốn RAM.
+        if not ID_RE.match(video_id):
+            abort(404)
+        csv_p = _existing_csv(video_id)
+        buf = io.BytesIO()
+        try:
+            build_frames_zip(str(_video_path(video_id)), video_id, csv_p, cfg, buf)
+        except Exception as e:
+            return jsonify(error=f"Không tạo được ZIP: {e}"), 500
+        buf.seek(0)
+        return send_file(buf, mimetype="application/zip", as_attachment=True,
+                         download_name=f"{video_id}_frames.zip")
 
     return app

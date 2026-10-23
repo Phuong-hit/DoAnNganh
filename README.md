@@ -61,6 +61,7 @@ Ghi đè cấu hình không cần sửa file: `python run_web.py --set source.ta
 | Trích skeleton | Một video, tất cả, hoặc một đường dẫn file. Chạy nền, có thanh tiến độ, **Hủy** được. Video đã có thì bỏ qua (tích *chạy lại* hoặc bấm *trích lại* để ghi đè). Ghi vào file tạm rồi mới đổi tên, nên video trích dở không bị coi là "đã có" |
 | Kiểm tra CSV | Xem mục 5 |
 | Tải về | CSV gốc (dạng rộng, đúng định dạng `CSVExporter`), CSV dạng dài (1 dòng/khớp), bảng `_extract_summary.csv` (số khung, tỉ lệ có người, `missing_ratio`, latency, FPS từng video) |
+| Tải toàn bộ khung | Nút **Tải toàn bộ khung (ZIP)** dưới trình phát (bật khi video đã có CSV). Tạo một file ZIP chứa mọi khung của video dạng JPEG, mỗi khung đã vẽ skeleton lấy từ CSV và ghi chú `khung` + `t` ở góc dưới. Tên file: `frame_<chỉ số>_t<giây>.jpg` |
 
 ## 4. Cấu trúc thư mục
 
@@ -144,6 +145,7 @@ Tham số cửa sổ ở mục `check:` của `configs/web.yaml` (mặc định 
 | GET | `/api/check/<video_id>` | Báo cáo kiểm tra CSV |
 | GET | `/video/<video_id>` | File video gốc (hỗ trợ Range để tua) |
 | GET | `/download/<video_id>.csv[?format=long]`, `/download/_extract_summary.csv` | Tải về |
+| GET | `/frames/<video_id>.zip` | ZIP mọi khung đã vẽ skeleton |
 
 ## 8. Khác biệt so với fall_app
 
