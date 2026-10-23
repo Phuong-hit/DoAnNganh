@@ -2,13 +2,8 @@
 
 Phục vụ đồ án *Hệ thống phát hiện ngã dựa trên skeleton trên thiết bị biên*.
 
-- **Xử lý** (nguồn video → ước lượng tư thế → lọc → ghi CSV / vẽ) dùng **nguyên vẹn** các tệp trong `src/`
-  của newfilecode, không sửa dòng nào. Logic từng tệp xem ở [`HUONG_DAN.md`](HUONG_DAN.md).
-- **Giao diện web** (`web/`) có các chức năng như giao diện web của fall_app, viết lại để gọi các lớp
-  `FileSource`, `StreamSource`, `PoseEstimate`, `SkeletonFilter`, `SkeletonDraw`, `CSVExporter` của `src/`.
 
-```
- Nguồn                       src/ (giữ nguyên)                                   Web
+ Nguồn                       src/                                     Web
 ┌──────────────┐ khung ┌──────────────┐ PoseResult ┌────────────────┐ ┌──────────────────────────┐
 │ FileSource   │──────►│ PoseEstimate │───────────►│ SkeletonFilter │►│ CSVExporter → CSV        │
 │ StreamSource │       │ (YOLO-pose)  │            │ (tùy chọn)     │ │ SkeletonDraw → MJPEG     │
@@ -147,15 +142,7 @@ Tham số cửa sổ ở mục `check:` của `configs/web.yaml` (mặc định 
 | GET | `/download/<video_id>.csv[?format=long]`, `/download/_extract_summary.csv` | Tải về |
 | GET | `/frames/<video_id>.zip` | ZIP mọi khung đã vẽ skeleton |
 
-## 8. Khác biệt so với fall_app
-
-- Không có file `.npz`: newfilecode chỉ xuất CSV, nên CSV là định dạng lưu chính; trình phát và kiểm tra đều đọc CSV.
-- Quy ước "không có người" là **ô trống/NaN** (newfilecode), không phải 0 như fall_app.
-- Chỉ có backend YOLO (và backend giả); chưa có ONNX/MoveNet như fall_app.
-- Chỉ đọc file video, không đọc thư mục ảnh.
-- Thêm so với fall_app: nút Quét video, bật/tắt SkeletonFilter khi xem trực tiếp, hủy job, tiến độ theo khung, tải CSV dạng dài và bảng tóm tắt.
-
-## 9. Hạn chế đã biết
+## 8. Hạn chế 
 
 - Chưa chạy thử với YOLO thật, video thật có người, hay webcam thật. Đã kiểm thử đầu-cuối bằng backend giả,
   gồm cả `StreamSource` đọc một luồng MJPEG qua HTTP.
