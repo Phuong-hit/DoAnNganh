@@ -4,6 +4,21 @@ Tài liệu này giải thích **logic của từng tệp và lý do thiết k�
 
 > **Tình trạng:** toàn bộ mã đã được chạy thử đầu-cuối bằng backend giả và dữ liệu tổng hợp. **Chưa** kiểm thử với model YOLO thật, video thật hay camera thật. Các ngưỡng của bộ lọc là giá trị khởi đầu, chưa hiệu chỉnh trên video có cú ngã thật. Xem mục 7 để biết việc nên làm đầu tiên.
 
+> **Cập nhật khi tích hợp code_1:** `src/` đã thay bằng bản code_1. Khác biệt chính so với mô tả gốc bên dưới:
+> - `PoseEstimate`/`YoloBackend` (3.2): mặc định dùng `model.track(persist=True)` + ByteTrack (`use_tracker`), chọn người
+>   theo `track_id` trước, rồi mới theo IoU; `reset()` xóa cả trạng thái tracker. Thêm `iou`, `imgsz`, `score` (độ tin cậy bbox).
+>   Ngưỡng mặc định `kp_conf` 0.35.
+> - `SkeletonFilter` (3.3): bước 9 dùng **One Euro filter** (`min_cutoff`, `beta`, theo `dt` thật) thay cho EMA `alpha`;
+>   làm mượt cả bbox; khung mất người cũng tăng bộ đếm `missing`. Mặc định `min_conf` 0.35, `max_hold_frames` 5.
+> - `SkeletonDraw` (3.7): vẽ thêm bbox + "person <score>", tùy chọn in conf từng khớp.
+> - `constants.py`: thêm `FLIP_INDEX` (lật trái/phải khi tăng cường dữ liệu).
+> - Tệp mới: `skeleton_io.py` (PoseResult → `seq [T,17,3]`, `mask`; `make_windows`), `features.py` (`normalize_clip`:
+>   một tâm hông + một tỉ lệ xương cho cả clip, kênh 3 = mask), `graph.py` + `model_stgcn.py` (ST-GCN),
+>   `classifier.py` (`FallClassifier` dùng chung cho mọi kiến trúc), `stgcn_inference.py` (tên cũ, lớp con của `FallClassifier`).
+> - Sửa nhỏ khi ghép: `graph.py` đổi `from src.constants` thành import tương đối; `model_stgcn.py` thêm
+>   `@register_model("stgcn")`; `stgcn_inference.py` chuyển logic sang `classifier.py` (API giữ nguyên).
+> - `main.py` không có trong bộ này; giao diện web (`web/engine.py`) đóng vai trò nối các khối. Xem README mục 10 cho B1 (LSTM).
+
 ---
 
 ## 1. Bức tranh tổng thể

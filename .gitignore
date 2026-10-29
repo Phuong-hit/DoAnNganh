@@ -7,3 +7,4 @@ data/videos/**/*
 !data/videos/**/.gitkeep
 models/*.pt
 models/*.onnx
+!.vscode/

@@ -37,6 +37,7 @@ class PoseResult:
     height: int = 0
     bbox: Optional[tuple] = None  # (x1, y1, x2, y2) chuẩn hóa 0-1
     track_id: Optional[int] = None
+    score: Optional[float] = None  # confidence của bbox người
 
     @property
     def aspect(self) -> float:
@@ -54,6 +55,7 @@ class Detection:
     conf: np.ndarray              # (17,)
     bbox_px: np.ndarray           # (4,) x1, y1, x2, y2
     track_id: Optional[int] = None
+    score: Optional[float] = None  # confidence của bbox
 
 
 class PoseBackend(Protocol):
@@ -66,7 +68,8 @@ class PoseBackend(Protocol):
 class YoloBackend:
     """Backend Ultralytics. Chỉ import ultralytics khi thật sự dùng."""
 
-    def __init__(self, model_path, conf=0.4, device=None):
+    def __init__(self, model_path, conf=0.4, device=None, iou=0.5,
+                 use_tracker=True, tracker="bytetrack.yaml", imgsz=None):
         self.model_path = Path(model_path)
         # Tên trần như "yolov8n-pose.pt" (không có thư mục) thì để
         # Ultralytics tự tải về; đường dẫn có thư mục thì phải tồn tại.
@@ -85,13 +88,23 @@ class YoloBackend:
         self.model = YOLO(str(self.model_path))
         self.conf = conf
         self.device = device
+        self.iou = iou                  # ngưỡng IoU của NMS
+        self.use_tracker = use_tracker  # True: dùng ByteTrack/BoT-SORT để có track_id
+        self.tracker = tracker
+        self.imgsz = imgsz
 
     def detect(self, frame_bgr):
-        # predict() thay vì track(): không có trạng thái ngầm của tracker,
-        # việc bám người do PoseEstimate tự làm và reset được.
-        res = self.model.predict(
-            source=frame_bgr, conf=self.conf, device=self.device, verbose=False
-        )[0]
+        # track() khi use_tracker=True (giữ ID qua khung), predict() khi False.
+        # reset() xóa trạng thái tracker khi đổi video.
+        kwargs = dict(source=frame_bgr, conf=self.conf, iou=self.iou,
+                      device=self.device, verbose=False)
+        if self.imgsz:
+            kwargs["imgsz"] = self.imgsz
+        if self.use_tracker:
+            # persist=True: tracker giữ trạng thái giữa các khung.
+            res = self.model.track(persist=True, tracker=self.tracker, **kwargs)[0]
+        else:
+            res = self.model.predict(**kwargs)[0]
         if res.keypoints is None or len(res.keypoints) == 0:
             return []
 
@@ -107,6 +120,19 @@ class YoloBackend:
             else None
         )
 
+        scores = (
+            res.boxes.conf.cpu().numpy()
+            if res.boxes is not None and len(res.boxes) == len(xy)
+            else None
+        )
+
+        ids = (
+            res.boxes.id.int().cpu().numpy()
+            if res.boxes is not None and res.boxes.id is not None
+            and len(res.boxes.id) == len(xy)
+            else None
+        )
+
         dets = []
         for i in range(len(xy)):
             if boxes is not None:
@@ -115,8 +141,19 @@ class YoloBackend:
                 good = kc[i] > 0
                 pts = xy[i][good] if good.any() else xy[i]
                 bb = np.array([*pts.min(0), *pts.max(0)], dtype=np.float32)
-            dets.append(Detection(xy[i], kc[i], bb))
+            s = float(scores[i]) if scores is not None else None
+            tid = int(ids[i]) if ids is not None else None
+            dets.append(Detection(xy[i], kc[i], bb, tid, s))
         return dets
+
+    def reset(self):
+        """Xóa trạng thái tracker (gọi khi bắt đầu video mới)."""
+        pred = getattr(self.model, "predictor", None)
+        for t in getattr(pred, "trackers", None) or []:
+            try:
+                t.reset()
+            except Exception:
+                pass
 
     def close(self):
         self.model = None
@@ -137,32 +174,46 @@ class PoseEstimate:
         conf: float = 0.4,
         device: str | None = None,
         backend: PoseBackend | None = None,
-        kp_conf: float = 0.3,        # ngưỡng để tính một khớp là "tin cậy"
+        kp_conf: float = 0.35,       # ngưỡng để tính một khớp là "tin cậy"
         min_valid_joints: int = 5,   # ít hơn số này -> valid = False
         track_iou: float = 0.1,      # IoU tối thiểu để coi là cùng một người
         lost_reset_frames: int = 30, # mất người quá lâu thì quên người cũ
+        iou: float = 0.5,            # NMS IoU
+        use_tracker: bool = True,    # ByteTrack để giữ ID
+        tracker: str = "bytetrack.yaml",
+        imgsz: int | None = None,    # None = mặc định của model
     ):
         if backend is None:
             if model_path is None:
                 raise ValueError("Cần model_path hoặc backend.")
-            backend = YoloBackend(model_path, conf=conf, device=device)
+            backend = YoloBackend(model_path, conf=conf, device=device, iou=iou,
+                                  use_tracker=use_tracker, tracker=tracker, imgsz=imgsz)
         self.backend = backend
         self.kp_conf = kp_conf
         self.min_valid_joints = min_valid_joints
         self.track_iou = track_iou
         self.lost_reset_frames = lost_reset_frames
         self._prev_bbox = None       # bbox pixel của người đang bám
+        self._prev_id = None         # track_id của người đang bám
         self._lost = 0
 
     # ------------------------------------------------------------------
     def reset(self):
         """Gọi khi bắt đầu video mới."""
         self._prev_bbox = None
+        self._prev_id = None
         self._lost = 0
+        reset_backend = getattr(self.backend, "reset", None)
+        if callable(reset_backend):
+            reset_backend()
 
     def _select(self, dets: list[Detection]) -> Optional[Detection]:
         if not dets:
             return None
+        if self._prev_id is not None:
+            for d in dets:
+                if d.track_id == self._prev_id:
+                    return d
         if self._prev_bbox is not None:
             ious = [_iou(d.bbox_px, self._prev_bbox) for d in dets]
             best = int(np.argmax(ious))
@@ -179,6 +230,7 @@ class PoseEstimate:
         self._lost += 1
         if self._lost > self.lost_reset_frames:
             self._prev_bbox = None
+            self._prev_id = None
 
     # ------------------------------------------------------------------
     def process_frame(self, frame, frame_idx: int, t: float) -> PoseResult:
@@ -206,6 +258,7 @@ class PoseEstimate:
         joints[missing, 2] = 0.0
 
         self._prev_bbox = det.bbox_px
+        self._prev_id = det.track_id
         self._lost = 0
         bb = det.bbox_px
         bbox = (
@@ -213,7 +266,7 @@ class PoseEstimate:
             float(np.clip(bb[2] / w, 0, 1)), float(np.clip(bb[3] / h, 0, 1)),
         )
         return PoseResult(
-            frame_idx, t, True, joints, w, h, bbox, det.track_id
+            frame_idx, t, True, joints, w, h, bbox, det.track_id, det.score
         )
 
     def close(self):

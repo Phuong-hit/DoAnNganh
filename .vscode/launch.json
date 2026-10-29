@@ -1,0 +1,74 @@
+{
+  // Chạy bằng F5 hoặc tab "Run and Debug": chọn cấu hình trong danh sách.
+  // Mọi cấu hình chạy từ thư mục gốc project (cwd = workspaceFolder).
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "B1: Train LSTM",
+      "type": "debugpy", "request": "launch", "program": "${workspaceFolder}/train.py",
+      "args": ["--arch", "lstm", "--data", "data/dataset.npz", "--out", "models/best_lstm.pt"],
+      "cwd": "${workspaceFolder}", "console": "integratedTerminal", "justMyCode": true
+    },
+    {
+      "name": "B1: Kiểm tra nhãn dataset",
+      "type": "debugpy", "request": "launch", "program": "${workspaceFolder}/check_labels.py",
+      "args": ["data/dataset.npz"],
+      "cwd": "${workspaceFolder}", "console": "integratedTerminal", "justMyCode": true
+    },
+    {
+      "name": "B1: Train LSTM (dataset sạch)",
+      "type": "debugpy", "request": "launch", "program": "${workspaceFolder}/train.py",
+      "args": ["--arch", "lstm", "--data", "data/dataset_clean.npz", "--out", "models/best_lstm.pt"],
+      "cwd": "${workspaceFolder}", "console": "integratedTerminal", "justMyCode": true
+    },
+    {
+      "name": "B1: Train LSTM gộp val (sau khi chạy cấu hình trên)",
+      "type": "debugpy", "request": "launch", "program": "${workspaceFolder}/train.py",
+      "args": ["--arch", "lstm", "--data", "data/dataset_clean.npz", "--merge-val",
+               "--from-report", "models/best_lstm.report.json", "--out", "models/lstm_trainval.pt"],
+      "cwd": "${workspaceFolder}", "console": "integratedTerminal", "justMyCode": true
+    },
+    {
+      "name": "B1: Train ST-GCN (huấn luyện lại trên máy)",
+      "type": "debugpy", "request": "launch", "program": "${workspaceFolder}/train.py",
+      "args": ["--arch", "stgcn", "--data", "data/dataset.npz", "--out", "models/stgcn_local.pt"],
+      "cwd": "${workspaceFolder}", "console": "integratedTerminal", "justMyCode": true
+    },
+    {
+      "name": "B1: So sánh ST-GCN và LSTM (test)",
+      "type": "debugpy", "request": "launch", "program": "${workspaceFolder}/evaluate.py",
+      "args": ["models/best_stgcn.pt", "models/best_lstm.pt", "--data", "data/dataset.npz",
+               "--device", "cpu", "--csv", "output/compare_test.csv"],
+      "cwd": "${workspaceFolder}", "console": "integratedTerminal", "justMyCode": true
+    },
+    {
+      "name": "B1: Báo cáo so sánh HTML",
+      "type": "debugpy", "request": "launch", "program": "${workspaceFolder}/evaluate.py",
+      "args": ["models/best_stgcn.pt", "models/best_lstm.pt", "--data", "data/dataset.npz",
+               "--device", "cpu", "--html", "output/compare_test.html"],
+      "cwd": "${workspaceFolder}", "console": "integratedTerminal", "justMyCode": true
+    },
+    {
+      "name": "Chạy video với LSTM (main.py)",
+      "type": "debugpy", "request": "launch", "program": "${workspaceFolder}/main.py",
+      "args": ["--source", "${input:videoPath}", "--checkpoint", "models/best_lstm.pt"],
+      "cwd": "${workspaceFolder}", "console": "integratedTerminal", "justMyCode": true
+    },
+    {
+      "name": "Web (cấu hình code_1 + phát hiện ngã)",
+      "type": "debugpy", "request": "launch", "program": "${workspaceFolder}/run_web.py",
+      "args": ["--config", "configs/code1.yaml"],
+      "cwd": "${workspaceFolder}", "console": "integratedTerminal", "justMyCode": true
+    },
+    {
+      "name": "Web (thử giao diện, pose giả)",
+      "type": "debugpy", "request": "launch", "program": "${workspaceFolder}/run_web.py",
+      "args": ["--set", "pose.backend=dummy"],
+      "cwd": "${workspaceFolder}", "console": "integratedTerminal", "justMyCode": true
+    }
+  ],
+  "inputs": [
+    { "id": "videoPath", "type": "promptString", "description": "Đường dẫn video (hoặc 0 cho webcam)",
+      "default": "0" }
+  ]
+}

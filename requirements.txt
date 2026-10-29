@@ -6,3 +6,8 @@ flask>=3.0
 
 # Pose thật (pose.backend: yolo). Không cần nếu chỉ chạy thử với pose.backend=dummy.
 ultralytics>=8.1
+lap>=0.5.12          # ByteTrack (pose.use_tracker: true)
+
+# Bộ phân loại ngã ST-GCN / LSTM (src/classifier.py). ultralytics đã kéo theo torch.
+torch>=2.0            # máy có GPU NVIDIA: cài bản CUDA theo HUONG_DAN_B1.md mục 2
+openpyxl>=3.1         # make_intervals.py đọc bảng chú thích .xlsx

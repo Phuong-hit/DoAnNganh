@@ -5,6 +5,7 @@
   python run_web.py web --host 0.0.0.0      # cho máy khác trong mạng LAN truy cập
   python run_web.py scan                    # quét data/videos -> data/metadata.csv (giống nút "Quét video")
   python run_web.py check-csv               # kiểm tra mọi CSV của cấu hình hiện tại (thoát mã 1 nếu có lỗi)
+  python run_web.py build-dataset           # NPZ đã trích + nhãn metadata -> output/<cấu hình>/dataset/windows.npz
 
 Tùy chọn chung: --config configs/web.yaml   --set pose.backend=dummy --set source.target_fps=15
 """
@@ -66,6 +67,21 @@ def cmd_check(cfg, args):
     return 1 if bad else 0
 
 
+def cmd_dataset(cfg, args):
+    from web.dataset import build_dataset
+    try:
+        path, stats, notes = build_dataset(cfg, args.out)
+    except ValueError as e:
+        print(f"Lỗi: {e}")
+        return 1
+    print(f"Đã ghi {path}: {stats['windows']} cửa sổ {stats['window_size']} khung @ {stats['fps']} fps "
+          f"(ngã {stats['fall']}, không ngã {stats['no_fall']}) từ {stats['videos']} video")
+    for k, v in stats["by_split"].items():
+        print(f"  split {k}: {v['windows']} cửa sổ, ngã {v['fall']}")
+    for n in notes[:50]:
+        print("  -", n)
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description="Giao diện web phát hiện ngã",
                                  formatter_class=argparse.RawDescriptionHelpFormatter, epilog=__doc__)
@@ -78,11 +94,13 @@ def main(argv=None):
     sub.add_parser("scan", help="quét data/videos -> metadata.csv")
     p = sub.add_parser("check-csv", help="kiểm tra CSV cho xử lý chuỗi")
     p.add_argument("path", nargs="?", help="file hoặc thư mục CSV (mặc định: thư mục của cấu hình hiện tại)")
+    p = sub.add_parser("build-dataset", help="tạo windows.npz cho huấn luyện (ST-GCN / LSTM)")
+    p.add_argument("--out", default=None, help="file ra (mặc định output/<cấu hình>/dataset/windows.npz)")
     args = ap.parse_args(argv)
     if args.cmd is None:
         args = ap.parse_args((argv or sys.argv[1:]) + ["web"])
     cfg = load_config(args.config, args.set)
-    fn = {"web": cmd_web, "scan": cmd_scan, "check-csv": cmd_check}[args.cmd]
+    fn = {"web": cmd_web, "scan": cmd_scan, "check-csv": cmd_check, "build-dataset": cmd_dataset}[args.cmd]
     return fn(cfg, args) or 0
 
 

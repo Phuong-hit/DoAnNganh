@@ -17,7 +17,7 @@ from pathlib import Path
 
 import cv2
 
-from src.video_process import FramePacket
+from .video_process import FramePacket
 
 
 class StreamSource:
@@ -41,8 +41,7 @@ class StreamSource:
         self.max_seconds = max_seconds
         self.read_fail_limit = read_fail_limit
 
-        self.frames_dir = Path(output_dir) / "frames" / video_id
-        self.frames_dir.mkdir(parents=True, exist_ok=True)
+        self.frames_dir = Path(output_dir) / "frames" / video_id  # tạo khi cần
 
         self.cap = cv2.VideoCapture(source)
         if not self.cap.isOpened():
@@ -128,6 +127,7 @@ class StreamSource:
             next_emit = max(next_emit + period, cap_t)
 
     def save_frame(self, frame, frame_idx):
+        self.frames_dir.mkdir(parents=True, exist_ok=True)
         path = self.frames_dir / f"frame_{frame_idx:06d}.jpg"
         ok = cv2.imwrite(str(path), frame)
         if not ok:

@@ -59,7 +59,7 @@ class DummyBackend:
         conf = np.full(17, 0.9, np.float32)
         conf[3:5] = 0.5                                              # tai thường kém tin cậy
         bbox = np.array([*xy.min(0), *xy.max(0)], np.float32)
-        return [Detection(xy, conf, bbox)]
+        return [Detection(xy, conf, bbox, track_id=1, score=0.9)]
 
     def close(self):
         pass

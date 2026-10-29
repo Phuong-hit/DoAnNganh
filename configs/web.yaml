@@ -14,28 +14,53 @@ pose:
   model_path: models/yolov8n-pose.pt
   conf: 0.4                      # ngưỡng phát hiện người (CONF trong HUONG_DAN)
   device: null                   # null = để ultralytics tự chọn | cpu | cuda:0
-  kp_conf: 0.3                   # PoseEstimate: ngưỡng khớp tin cậy
+  kp_conf: 0.35                  # PoseEstimate: ngưỡng khớp tin cậy
   min_valid_joints: 5            # PoseEstimate: ít hơn -> valid = False
   track_iou: 0.1
   lost_reset_frames: 30
+  iou: 0.5                       # NMS IoU của YOLO
+  use_tracker: true              # true: model.track() + ByteTrack giữ track_id qua khung | false: predict()
+  tracker: bytetrack.yaml        # hoặc botsort.yaml
+  imgsz: null                    # null = 640 mặc định; 320 để gần cấu hình MaixCAM
 
 filter:
   enabled: true                  # USE_FILTER: chạy SkeletonFilter trước khi ghi CSV / vẽ
-  alpha: 0.5
-  min_conf: 0.3
-  max_hold_frames: 3
+  alpha: 0.5                     # (giữ cho tương thích; làm mượt giờ dùng One Euro bên dưới)
+  min_conf: 0.35
+  max_hold_frames: 5
   history_size: 3
   jump_ratio: 0.65
   min_jump: 0.04
   max_bone_ratio: 2.5
   collapse_ratio: 0.5
   max_gap_frames: 15
+  min_cutoff: 1.5                # One Euro: nhỏ hơn = mượt hơn khi đứng yên
+  beta: 4.0                      # One Euro: lớn hơn = bám nhanh hơn khi chuyển động (ngã)
+  smooth_bbox: true
+  default_dt: 0.1                # dt dùng khi t không tăng
 
 draw:
-  min_conf: 0.3                  # SkeletonDraw + lớp vẽ trên trình phát
+  min_conf: 0.35                 # SkeletonDraw + lớp vẽ trên trình phát
+  show_bbox: true                # hộp bao + "person <score>" trên luồng trực tiếp
+  show_score: true
+  show_kp_conf: false            # in conf từng khớp
 
 check:                           # tham số kiểm tra CSV cho xử lý chuỗi
   window_s: 2.0
   stride_s: 0.25
   kpt_conf_thres: 0.2
   max_missing: 0.4
+
+classifier:                      # bộ phân loại ngã (src/classifier.py) — ST-GCN, LSTM... chọn theo "arch" trong checkpoint
+  checkpoint: auto               # auto = models/best_lstm.pt nếu có, không thì models/best_stgcn.pt
+                                 # hoặc đường dẫn cụ thể; null = tắt. Đổi được ngay trên web (ô "Model").
+  threshold: null                # P(ngã) >= threshold -> NGÃ; null = ngưỡng chọn trên val lưu trong checkpoint (không có thì 0.5)
+  stride_frames: 5               # dự đoán lại sau mỗi N khung
+  window_size: null              # null = lấy từ checkpoint (mặc định 20 khung = 2 s @ 10 fps)
+  device: null                   # null = cuda nếu có, không thì cpu
+
+dataset:                         # run_web.py build-dataset / nút "Tạo dataset" -> output/<cấu hình>/dataset/windows.npz
+  win_sec: 2.0                   # độ dài cửa sổ (2 s @ 10 fps = 20 khung, khớp classifier.window_size)
+  stride_sec: 0.5
+  min_overlap: 0.3               # cửa sổ chồng >= 30% đoạn [fall_start_s, fall_end_s] -> nhãn NGÃ
+  min_valid_ratio: 0.0           # bỏ cửa sổ có tỉ lệ khung có người thấp hơn (0 = giữ hết)

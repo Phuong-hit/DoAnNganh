@@ -1,12 +1,14 @@
 """Ghép các khối của src/ thành pipeline cho web:
 
-    FileSource / StreamSource  ->  PoseEstimate  ->  SkeletonFilter  ->  CSVExporter / SkeletonDraw
+    FileSource / StreamSource  ->  PoseEstimate  ->  SkeletonFilter  ->  CSVExporter (+ NPZ) / SkeletonDraw
+                                                                    ->  FallClassifier (ST-GCN / LSTM, tùy chọn)
 
-Toàn bộ logic xử lý nằm trong src/ (newfilecode, giữ nguyên). File này chỉ:
+Toàn bộ logic xử lý nằm trong src/. File này chỉ:
   - tạo các đối tượng từ cấu hình,
   - chọn FileSource hay StreamSource theo chuỗi nguồn người dùng nhập,
   - đo latency pose / FPS đầu-cuối (src/ không đo),
-  - ghi CSV vào file tạm rồi mới đổi tên, để video trích dở không bị coi là "đã có".
+  - ghi CSV + NPZ vào file tạm rồi mới đổi tên, để video trích dở không bị coi là "đã có".
+    NPZ (skeleton_io.from_poses) giữ aspect của khung -> là đầu vào của bước tạo dataset/huấn luyện.
 """
 from __future__ import annotations
 
@@ -26,6 +28,7 @@ import numpy as np
 
 from src.csv_export import CSVExporter
 from src.pose_estimate import PoseEstimate, PoseResult
+from src.skeleton_io import from_poses
 from src.skeleton_draw import SkeletonDraw
 from src.skeleton_filter import SkeletonFilter
 from src.video_process import FileSource
@@ -45,7 +48,7 @@ def make_video_id(text: str) -> str:
 # ---------------------------------------------------------------------------- tạo đối tượng từ cấu hình
 def build_estimator(cfg: dict) -> PoseEstimate:
     p = cfg["pose"]
-    kw = dict(kp_conf=p.get("kp_conf", 0.3), min_valid_joints=p.get("min_valid_joints", 5),
+    kw = dict(kp_conf=p.get("kp_conf", 0.35), min_valid_joints=p.get("min_valid_joints", 5),
               track_iou=p.get("track_iou", 0.1), lost_reset_frames=p.get("lost_reset_frames", 30))
     backend = p.get("backend", "yolo")
     if backend == "dummy":
@@ -57,7 +60,9 @@ def build_estimator(cfg: dict) -> PoseEstimate:
     # Tên trần (yolov8n-pose.pt) để ultralytics tự tải; có thư mục thì tính từ gốc project.
     if model.parent != Path("."):
         model = resolve(model)
-    return PoseEstimate(model_path=model, conf=p.get("conf", 0.4), device=p.get("device"), **kw)
+    return PoseEstimate(model_path=model, conf=p.get("conf", 0.4), device=p.get("device"),
+                        iou=p.get("iou", 0.5), use_tracker=p.get("use_tracker", True),
+                        tracker=p.get("tracker", "bytetrack.yaml"), imgsz=p.get("imgsz"), **kw)
 
 
 def build_filter(cfg: dict, enabled: bool | None = None) -> SkeletonFilter | None:
@@ -68,7 +73,48 @@ def build_filter(cfg: dict, enabled: bool | None = None) -> SkeletonFilter | Non
 
 
 def build_drawer(cfg: dict) -> SkeletonDraw:
-    return SkeletonDraw(min_conf=(cfg.get("draw") or {}).get("min_conf", 0.3))
+    d = cfg.get("draw") or {}
+    return SkeletonDraw(min_conf=d.get("min_conf", 0.35), show_bbox=d.get("show_bbox", True),
+                        show_score=d.get("show_score", True), show_kp_conf=d.get("show_kp_conf", False))
+
+
+# Thứ tự ưu tiên khi classifier.checkpoint = auto: LSTM (B1) trước, rồi tới ST-GCN của code_1.
+AUTO_CHECKPOINTS = ("models/best_lstm.pt", "models/best_stgcn.pt")
+
+
+def list_checkpoints(cfg: dict | None = None) -> list[str]:
+    """Các checkpoint phân loại ngã trong models/ (bỏ qua trọng số YOLO)."""
+    d = resolve("models")
+    if not d.is_dir():
+        return []
+    return sorted(f"models/{p.name}" for p in d.glob("*.pt")
+                  if "yolo" not in p.name.lower() and "pose" not in p.name.lower())
+
+
+def classifier_path(cfg: dict) -> Path | None:
+    """Đường dẫn checkpoint của bộ phân loại ngã, None nếu chưa cấu hình / không tìm thấy.
+    "auto": models/best_lstm.pt nếu có, không thì models/best_stgcn.pt."""
+    ck = (cfg.get("classifier") or {}).get("checkpoint")
+    if not ck:
+        return None
+    if str(ck).lower() == "auto":
+        for c in AUTO_CHECKPOINTS:
+            if resolve(c).is_file():
+                return resolve(c)
+        return None
+    return resolve(ck)
+
+
+def build_classifier(cfg: dict):
+    """FallClassifier (ST-GCN / LSTM...) theo cấu hình, None nếu chưa cấu hình checkpoint.
+    torch chỉ được import ở đây, nên web vẫn chạy khi chưa cài torch / chưa có model."""
+    path = classifier_path(cfg)
+    if path is None:
+        return None
+    from src.classifier import FallClassifier
+    c = cfg.get("classifier") or {}
+    return FallClassifier(path, window_size=c.get("window_size"), stride_frames=c.get("stride_frames", 5),
+                          device=c.get("device"), fall_threshold=c.get("threshold"), verbose=False)
 
 
 def pose_tag(cfg: dict) -> str:
@@ -94,6 +140,39 @@ def output_dir(cfg: dict) -> Path:
 def csv_dir(cfg: dict) -> Path:
     # CSVExporter(video_id, output_dir) ghi vào <output_dir>/csv/<video_id>.csv
     return output_dir(cfg) / "csv"
+
+
+def npz_dir(cfg: dict) -> Path:
+    """<output_dir>/npz/<video_id>.npz: seq, mask, valid, t, frame_idx, fps, aspect (skeleton_io.from_poses)."""
+    return output_dir(cfg) / "npz"
+
+
+def npz_path_for(csv_path: Path) -> Path:
+    """.../csv/<id>.csv -> .../npz/<id>.npz (cùng cấu hình)."""
+    csv_path = Path(csv_path)
+    return csv_path.parent.parent / "npz" / f"{csv_path.stem}.npz"
+
+
+def save_npz(path: Path, poses: list[PoseResult], video_id: str):
+    """Lưu chuỗi pose theo quy ước skeleton_io (ghi file tạm rồi đổi tên)."""
+    item = from_poses(poses)
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".tmp_{uuid.uuid4().hex[:8]}.npz")
+    try:
+        np.savez_compressed(tmp, video_id=np.array(video_id), **item)
+        os.replace(tmp, path)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+def load_npz(path: Path) -> dict:
+    with np.load(path, allow_pickle=False) as z:
+        d = {k: z[k] for k in z.files}
+    for k in ("fps", "aspect"):
+        d[k] = float(d[k])
+    d["video_id"] = str(d.get("video_id", Path(path).stem))
+    return d
 
 
 # ---------------------------------------------------------------------------- nguồn
@@ -209,6 +288,40 @@ def draw_hud(image: np.ndarray, lines: list[str]) -> np.ndarray:
     return image
 
 
+def draw_fall(image: np.ndarray, result: dict | None, threshold: float = 0.5) -> np.ndarray:
+    """Nhãn kết quả phân loại ở góc PHẢI trên: đỏ = NGÃ, xanh = không ngã, xám = đang gom khung."""
+    if result is None:
+        text, color = "FALL? ...", (128, 128, 128)
+    elif result["label"] == 1:
+        text, color = f"FALL {result['probability']:.2f}", (0, 0, 255)
+    else:
+        text, color = f"no fall {result['probability']:.2f}", (0, 160, 0)
+    scale = max(0.6, image.shape[0] / 600)
+    th = max(2, int(scale * 2))
+    (tw, tht), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, scale, th)
+    x2, y1 = image.shape[1] - 8, 8
+    cv2.rectangle(image, (x2 - tw - 12, y1), (x2, y1 + tht + 14), color, -1)
+    cv2.putText(image, text, (x2 - tw - 6, y1 + tht + 6), cv2.FONT_HERSHEY_SIMPLEX, scale,
+                (255, 255, 255), th, cv2.LINE_AA)
+    return image
+
+
+def predict_video(clf, item: dict, batch: int = 256) -> dict:
+    """Chạy bộ phân loại trên cả video đã trích (NPZ), cửa sổ kết thúc ở mỗi stride_frames khung.
+    Cùng cách cắt và chuẩn hóa với FallClassifier.update(), để trình phát vẽ được P(ngã) theo thời gian."""
+    from src.features import normalize_clip
+    W, S = clf.window_size, clf.stride_frames
+    seq, mask, t = item["seq"], item["mask"], np.asarray(item["t"], dtype=float)
+    ends = list(range(W - 1, len(seq), S))
+    clips = [normalize_clip(seq[e - W + 1:e + 1], mask[e - W + 1:e + 1], item["aspect"]) for e in ends]
+    probs = []
+    for i in range(0, len(clips), batch):
+        probs.append(clf.predict_batch(np.stack(clips[i:i + batch])))
+    p = np.concatenate(probs) if probs else np.zeros(0)
+    return dict(t=[round(float(t[e]), 3) for e in ends], p=[round(float(v), 4) for v in p],
+                threshold=clf.fall_threshold, window_size=W, stride_frames=S, model=clf.name)
+
+
 # ---------------------------------------------------------------------------- trích skeleton -> CSV
 class Cancelled(Exception):
     pass
@@ -218,8 +331,9 @@ def extract_to_csv(spec: str, video_id: str, out_csv: Path, cfg: dict,
                    estimator: PoseEstimate | None = None,
                    progress: Callable[[int, int | None], None] | None = None,
                    should_stop: Callable[[], bool] | None = None,
-                   max_frames: int | None = None) -> dict:
-    """Trích skeleton một video, ghi CSV theo đúng định dạng CSVExporter của src/.
+                   max_frames: int | None = None, out_npz: Path | None = None) -> dict:
+    """Trích skeleton một video, ghi CSV theo đúng định dạng CSVExporter của src/,
+    kèm NPZ (skeleton_io.from_poses, có aspect) ở out_npz (mặc định .../npz/<video_id>.npz).
 
     Ghi vào thư mục tạm cạnh out_csv rồi os.replace: nếu lỗi/hủy giữa chừng thì không để lại
     CSV dở dang.
@@ -238,6 +352,7 @@ def extract_to_csv(spec: str, video_id: str, out_csv: Path, cfg: dict,
             if flt is not None:
                 flt.reset()
             stats = Stats()
+            poses: list[PoseResult] = []
             total = src.expected_frames
             with CSVExporter(video_id, tmp_root) as out:
                 for pkt in src.frames():
@@ -245,6 +360,7 @@ def extract_to_csv(spec: str, video_id: str, out_csv: Path, cfg: dict,
                         raise Cancelled()
                     pose, lat = estimate(estimator, flt, pkt.frame, pkt.idx, pkt.t)
                     out.write(pose)
+                    poses.append(pose)
                     stats.add(pose, lat)
                     if progress is not None and stats.frames % 5 == 0:
                         progress(stats.frames, total)
@@ -254,7 +370,8 @@ def extract_to_csv(spec: str, video_id: str, out_csv: Path, cfg: dict,
                 tmp_csv = out.output_path
             if stats.frames == 0:
                 raise ValueError("Không đọc được khung hình nào (file hỏng hoặc codec không hỗ trợ).")
-            os.replace(tmp_csv, out_csv)
+            save_npz(Path(out_npz) if out_npz else npz_path_for(out_csv), poses, video_id)
+            os.replace(tmp_csv, out_csv)              # CSV đổi tên sau cùng: có CSV <=> có NPZ
             s = stats.summary()
             s.update(missing_ratio=round(missing_ratio, 3), out_fps=round(src.out_fps, 3),
                      filter=flt is not None)
