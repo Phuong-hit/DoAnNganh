@@ -313,11 +313,18 @@ def draw_fall(image: np.ndarray, result: dict | None, threshold: float = 0.5) ->
 def predict_video(clf, item: dict, batch: int = 256) -> dict:
     """Chạy bộ phân loại trên cả video đã trích (NPZ), cửa sổ kết thúc ở mỗi stride_frames khung.
     Cùng cách cắt và chuẩn hóa với FallClassifier.update(), để trình phát vẽ được P(ngã) theo thời gian."""
+    from src.classifier import pad_to_window
     from src.features import normalize_clip
     W, S = clf.window_size, clf.stride_frames
     seq, mask, t = item["seq"], item["mask"], np.asarray(item["t"], dtype=float)
-    ends = list(range(W - 1, len(seq), S))
-    clips = [normalize_clip(seq[e - W + 1:e + 1], mask[e - W + 1:e + 1], item["aspect"]) for e in ends]
+    if 0 < len(seq) < W:
+        # Video ngắn hơn cửa sổ (clip ~1.9 s): một dự đoán trên cả video, đệm cuối như lúc tạo dataset.
+        ps, pm = pad_to_window(seq, mask, W)
+        clips = [normalize_clip(ps, pm, item["aspect"])]
+        ends = [len(seq) - 1]
+    else:
+        ends = list(range(W - 1, len(seq), S))
+        clips = [normalize_clip(seq[e - W + 1:e + 1], mask[e - W + 1:e + 1], item["aspect"]) for e in ends]
     probs = []
     for i in range(0, len(clips), batch):
         probs.append(clf.predict_batch(np.stack(clips[i:i + batch])))

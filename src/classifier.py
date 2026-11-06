@@ -41,7 +41,7 @@ LABEL_NAMES = {0: "KHÔNG NGÃ", 1: "NGÃ"}
 MODEL_REGISTRY: dict[str, type] = {}
 
 # Module chứa model, được import khi cần để tự đăng ký. Thiếu file thì bỏ qua (model_lstm: B1).
-_BUILTIN_MODULES = ("model_stgcn", "model_lstm")
+_BUILTIN_MODULES = ("model_stgcn", "model_lstm", "model_shiftgcn")
 
 
 def register_model(name: str):
@@ -98,6 +98,29 @@ def load_checkpoint(path, device="cpu") -> dict:
         return torch.load(path, map_location=device)
 
 
+def normalize_checkpoint(ckpt) -> dict:
+    """Đưa các định dạng checkpoint khác về định dạng chung {"arch", "state", "model_kwargs", ...}.
+
+    - state_dict trần                         -> arch "stgcn" (checkpoint cũ của code_1)
+    - định dạng train Shift-GCN của nhóm      -> arch "shiftgcn"
+        {"model_state_dict", "num_frames", "num_point", "in_channels", "num_class", "epoch", "best_val_f1", ...}
+        (models/shiftgcn_best.pt; cửa sổ = num_frames khung @ 10 fps, ngưỡng 0.5)
+    """
+    if not isinstance(ckpt, dict):
+        raise ValueError("Checkpoint không đúng định dạng (cần dict).")
+    if "model_state_dict" in ckpt and "num_frames" in ckpt:
+        kw = dict(num_point=int(ckpt.get("num_point", 17)), num_frames=int(ckpt["num_frames"]))
+        meta = {k: v for k, v in ckpt.items()
+                if k not in ("model_state_dict", "optimizer_state_dict", "num_point", "num_frames",
+                             "in_channels", "num_class")}
+        return dict(meta, arch=str(ckpt.get("arch") or "shiftgcn"), state=ckpt["model_state_dict"],
+                    in_channels=int(ckpt.get("in_channels", 3)), num_classes=int(ckpt.get("num_class", 2)),
+                    model_kwargs=kw, window_size=kw["num_frames"], fps=ckpt.get("fps", 10.0))
+    if "state" not in ckpt and "arch" not in ckpt:   # file chỉ chứa state_dict trần
+        return {"state": ckpt}
+    return ckpt
+
+
 class FallClassifier:
     """Suy luận ngã theo cửa sổ trượt trên chuỗi PoseResult.
 
@@ -109,9 +132,7 @@ class FallClassifier:
                  fall_threshold=None, verbose=True, speed_gate: dict | None = None):
         self.checkpoint_path = Path(checkpoint_path)
         self.device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
-        ckpt = load_checkpoint(self.checkpoint_path, self.device)
-        if "state" not in ckpt and "arch" not in ckpt:   # file chỉ chứa state_dict trần
-            ckpt = {"state": ckpt}
+        ckpt = normalize_checkpoint(load_checkpoint(self.checkpoint_path, self.device))
 
         self.arch = str(ckpt.get("arch") or "stgcn")
         self.model = build_model(self.arch, in_channels=int(ckpt.get("in_channels", 3)),
@@ -191,3 +212,24 @@ class FallClassifier:
         item = from_poses(list(self.buffer))       # cùng quy ước với lúc tạo dataset
         self.last = self.predict_clip(item["seq"], item["mask"], item.get("aspect", 1.0), fps=item.get("fps"))
         return self.last
+
+    def flush(self):
+        """Gọi khi video kết thúc. Video ngắn hơn cửa sổ (clip ~1.9 s = 19 khung < 20) thì update() chưa dự đoán
+        lần nào: dự đoán một lần trên phần đã gom, đệm cuối cho đủ cửa sổ (giống make_windows lúc tạo dataset).
+        Trả kết quả mới, hoặc None nếu đã có dự đoán / chưa có khung nào."""
+        if self.last is not None or not self.buffer:
+            return None
+        item = from_poses(list(self.buffer))
+        seq, mask = pad_to_window(item["seq"], item["mask"], self.window_size)
+        self.last = self.predict_clip(seq, mask, item.get("aspect", 1.0), fps=item.get("fps"))
+        return self.last
+
+
+def pad_to_window(seq, mask, window_size):
+    """Đệm cuối bằng 0 (mask=False) cho đủ window_size khung — đúng cách skeleton_io.make_windows đệm video ngắn."""
+    pad = window_size - len(seq)
+    if pad <= 0:
+        return seq, mask
+    seq = np.pad(seq, [(0, pad)] + [(0, 0)] * (np.ndim(seq) - 1))
+    mask = np.pad(mask, [(0, pad)] + [(0, 0)] * (np.ndim(mask) - 1))
+    return seq, mask

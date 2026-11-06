@@ -243,6 +243,7 @@ def create_app(cfg: dict, check_model: bool = True) -> Flask:
                             time.sleep(delay)
                     # Pose vẫn chạy khi tắt skeleton, nên FPS và latency vẫn đúng
                     img = drawer.draw(pkt.frame, pose) if show_skeleton else pkt.frame.copy()
+                    last_base = img.copy()                    # khung cuối chưa vẽ nhãn, dùng khi flush
                     fall = {}
                     if clf is not None:
                         t0 = time.perf_counter()
@@ -277,6 +278,23 @@ def create_app(cfg: dict, check_model: bool = True) -> Flask:
                     ok, jpg = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 80])
                     if ok:
                         yield b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + jpg.tobytes() + b"\r\n"
+                # Video ngắn hơn cửa sổ (clip ~1.9 s < 20 khung): chưa dự đoán lần nào -> dự đoán một lần
+                # trên phần đã gom (đệm cuối như lúc train), rồi gửi lại khung cuối có nhãn.
+                if clf is not None and not me["stop"].is_set() and state["live"].get("t") is not None:
+                    res = clf.flush()
+                    if res is not None:
+                        t_end = state["live"]["t"]
+                        hist.append([t_end, round(res["probability"], 4), res["label"]])
+                        if res["label"] == 1:
+                            events.append(dict(t=t_end, p=round(res["probability"], 3)))
+                        state["live"].update(fall_prob=round(res["probability"], 3), fall_label=res["label"],
+                                             fall_gated=res.get("gated", False), speed=res.get("speed"),
+                                             gate_text=clf.gate.describe(),
+                                             fall_hist=list(hist), fall_events=list(events))
+                        draw_fall(last_base, res)
+                        ok, jpg = cv2.imencode(".jpg", last_base, [cv2.IMWRITE_JPEG_QUALITY, 80])
+                        if ok:
+                            yield b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + jpg.tobytes() + b"\r\n"
             finally:
                 if src is not None:
                     src.close()

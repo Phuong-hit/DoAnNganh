@@ -115,6 +115,22 @@ def run(args) -> int:
                     cv2.imshow("Fall detection", img)
                     if cv2.waitKey(1) & 0xFF == ord("q"):
                         break
+            else:
+                # Video ngắn hơn cửa sổ (clip ~1.9 s < 20 khung): dự đoán một lần trên cả video (đệm cuối).
+                res = clf.flush() if n else None
+                if res is not None:
+                    log_rows.append((round(pkt.t, 3), round(res["probability"], 4), res["label"],
+                                     int(res.get("gated", False)), res["speed"].get("shoulder_drop"),
+                                     res["speed"].get("rotation")))
+                    print(f"Video ngắn hơn cửa sổ {clf.window_size} khung -> dự đoán 1 lần trên cả video: "
+                          f"{res['name']} (P(ngã) = {res['probability']:.2f})")
+                    img = drawer.draw(pkt.frame, pose)
+                    draw_fall(img, res)
+                    if writer is not None:
+                        writer.write(img)
+                    if not args.no_show:
+                        cv2.imshow("Fall detection", img)
+                        cv2.waitKey(2000)                 # giữ khung kết quả 2 s
     finally:
         estimator.close()
         if writer is not None:

@@ -236,3 +236,30 @@ python run_web.py --config configs/code1.yaml                        # web tự 
 
 Thêm kiến trúc khác sau này: một tệp `src/model_<tên>.py` có `@register_model("<tên>")`, thêm tên module vào
 `_BUILTIN_MODULES` trong `src/classifier.py`, rồi `python train.py --arch <tên>`.
+
+## 11. Bộ test chung, Test Tool B0/B1/B2, kết nối App
+
+Cả nhóm đánh giá trên **cùng một bộ test** `data/testsets/v1_test/` (split test của `data/datasetv1.npz`:
+subject SBJ13, SBJ17, SBJ28; 441 cửa sổ 17 khung @ 10 fps; 147 video, 82 ngã). `manifest.json` ghi nguồn,
+quy ước nhãn (0 = ADL, 1 = Fall), định dạng và mã băm nội dung; `load_testset()` báo lỗi nếu dữ liệu bị sửa.
+
+| Vai trò | Model | File |
+|---|---|---|
+| B0 | Luật (Phúc), tham số dò trên train của datasetv1 | `models/b0_rule_v1.json` (`tune_b0.py --data data/datasetv1.npz --name b0_rule_v1`) |
+| B1 | LSTM nhỏ (embed 64, hidden 64, 1 lớp), chọn bằng `tune_b1.py` | `models/b1_lstm.pt` |
+| B2 | Shift-GCN (`src/model_shiftgcn.py`, arch `shiftgcn`) | `models/shiftgcn_best.pt` |
+
+```bash
+python test_tool.py --make-testset v1_test --data data/datasetv1.npz --split test   # tạo bộ test (một lần)
+python test_tool.py                                   # B0/B1/B2 trên bộ test chung -> output/test_runs/<thời gian>/
+python test_tool.py --extra stgcn=models/x.pt         # thêm model để so sánh
+python tune_b1.py                                     # tinh chỉnh B1: 8 cấu hình x 3 seed, chọn theo val
+python app_check.py                                   # chạy video thật qua pipeline App, so với bộ test
+python run_web.py --config configs/v1.yaml            # web với pose giống lúc trích datasetv1 + B2
+```
+
+Test Tool ghi `report.md` (bảng P/R/F1 theo cửa sổ và theo video, thời gian xử lý, phân tích báo nhầm / bỏ sót
+theo hành động và hướng camera), `predictions.csv` (nhãn thật + dự đoán từng cửa sổ), `video_predictions.csv`,
+`errors.csv`, `comparison.csv`, `summary.json`. `FallClassifier` đọc thẳng checkpoint Shift-GCN của nhóm
+(`model_state_dict`, `num_frames`, ...), nên web, `main.py`, `evaluate.py` dùng được ngay.
+`build_dataset_v1.py` là script tạo `datasetv1.npz` (cửa sổ 17 khung, stride 1, nhãn theo cả video).

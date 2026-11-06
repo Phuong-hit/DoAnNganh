@@ -9,9 +9,11 @@
 # Mọi đường dẫn tương đối tính từ thư mục gốc project.
 
 paths:
-  videos: data/videos_new        # VideoDataset.zip: fall/ (997) và adl/ (1017), clip ~1.9 s @ 30 fps, 29 người
-  metadata: data/metadata_new.csv  # nhãn ngã = cả clip (0 -> duration_s); subject_id = SBJxx
-  # dataset cũ: videos: data/videos, metadata: data/metadata.csv
+  videos: data/videos            # video của nhóm (fall/, adl/) — hiện trên web
+  metadata: data/metadata.csv
+  # dataset train v6 (2014 clip VideoDataset): videos: data/videos_new, metadata: data/metadata_new.csv
+  #   tạo lại dataset: run_web.py --config configs/v6.yaml --set paths.videos=data/videos_new
+  #                    --set paths.metadata=data/metadata_new.csv extract | build-dataset
   output: output                 # kết quả: output/<cấu hình>/csv/<video_id>.csv
 
 source:
@@ -60,14 +62,19 @@ check:                           # tham số kiểm tra CSV cho xử lý chuỗi
   max_missing: 0.4
 
 classifier:                      # bộ phân loại ngã (src/classifier.py) — ST-GCN, LSTM... chọn theo "arch" trong checkpoint
-  checkpoint: models/stgcn_v6.pt # train trên skeleton v6 (test F1 0.989); hoặc models/lstm_v6.pt (F1 0.981)
+  checkpoint: models/lstm_v6.pt  # + cổng tốc độ bên dưới: bắt đủ 4/4 video ngã của nhóm, chỉ 1/5 ADL báo nhầm
+                                 # (models/stgcn_v6.pt: test F1 cao hơn nhưng trên video nhóm báo nhầm nằm nhanh xuống giường)
                                  # auto = models/best_lstm.pt nếu có, không thì models/best_stgcn.pt
                                  # hoặc đường dẫn cụ thể; null = tắt. Đổi được ngay trên web (ô "Model").
   threshold: null                # P(ngã) >= threshold -> NGÃ; null = ngưỡng chọn trên val lưu trong checkpoint (không có thì 0.5)
   stride_frames: 5               # dự đoán lại sau mỗi N khung
   window_size: null              # null = lấy từ checkpoint (mặc định 20 khung = 2 s @ 10 fps)
   device: null                   # null = cuda nếu có, không thì cpu
-  speed_gate: null               # cổng tốc độ (src/motion.py): chỉ xác nhận NGÃ khi chuyển động đủ nhanh,
+  speed_gate: {enabled: true, shoulder_drop: 3.0, rotation: 100, keep_if_p_above: null}
+                                 # chọn cho lstm_v6 trên 9 video nhóm + val/test v6: chặn nằm nhanh xuống giường
+                                 # (sub1_01 vai ≤1.3, xoay ≤54) nhưng giữ ngã xuống giường (sub4_17 xoay 115).
+                                 # Đổi lại test v6 sót 4/184 cú ngã (không cổng: 1), báo nhầm 1/193 (không cổng: 6).
+                                 # cổng tốc độ (src/motion.py): chỉ xác nhận NGÃ khi chuyển động đủ nhanh,
                                  # để nằm xuống / leo lên giường / ngả lưng chậm không bị báo ngã.
                                  # null = dùng giá trị lưu trong checkpoint (calibrate_gate.py --save), không có thì tắt.
                                  # Bật/tắt và chỉnh ngay trên web (ô "Cổng tốc độ"). Ví dụ đặt tay:

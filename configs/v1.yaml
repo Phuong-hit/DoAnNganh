@@ -1,0 +1,76 @@
+# Cấu hình cho bộ test chung v1 (data/datasetv1.npz, data/testsets/v1_test): cửa sổ 17 khung @ 10 fps.
+# Pose GIỐNG lúc trích skeleton của datasetv1 (extract_skeleton.py: yolo26m-pose, imgsz 224x320, conf 0.25,
+# kp_conf 0.25) để skeleton trên web cùng phân phối với dữ liệu huấn luyện B1/B2.
+#     python run_web.py --config configs/v1.yaml
+#     python main.py --config configs/v1.yaml --source video.mp4
+# Model (đổi ngay trên web, ô "Model"):
+#     models/shiftgcn_best.pt  B2 Shift-GCN  (mặc định)
+#     models/b1_lstm.pt        B1 LSTM đã tinh chỉnh (tune_b1.py)
+# Lần chạy đầu ultralytics tự tải models/yolo26m-pose.pt.
+
+paths:
+  videos: data/videos            # video của nhóm (fall/, adl/) — hiện trên web
+  metadata: data/metadata.csv
+  # dataset train v6 (2014 clip VideoDataset): videos: data/videos_new, metadata: data/metadata_new.csv
+  #   tạo lại dataset: run_web.py --config configs/v6.yaml --set paths.videos=data/videos_new
+  #                    --set paths.metadata=data/metadata_new.csv extract | build-dataset
+  output: output                 # kết quả: output/<cấu hình>/csv/<video_id>.csv
+
+source:
+  target_fps: 10                 # FileSource / StreamSource lấy mẫu về FPS này (quy ước nhóm: 10)
+
+pose:
+  backend: yolo                  # yolo (YoloBackend của src/pose_estimate.py) | dummy (pose giả để test, không cần model)
+  model_path: models/yolo26m-pose.pt   # ultralytics tự tải về models/ lần đầu; = model của extract_skeleton.py
+  conf: 0.25                     # = extract_skeleton.py --conf
+  device: null                   # null = để ultralytics tự chọn | cpu | cuda:0
+  kp_conf: 0.25                  # = extract_skeleton.py --kp-conf
+  min_valid_joints: 5            # PoseEstimate: ít hơn -> valid = False
+  track_iou: 0.1
+  lost_reset_frames: 30
+  iou: 0.5                       # NMS IoU của YOLO
+  use_tracker: true              # true: model.track() + ByteTrack giữ track_id qua khung | false: predict()
+  tracker: bytetrack.yaml        # hoặc botsort.yaml
+  imgsz: [224, 320]              # (cao, rộng) = extract_skeleton.py --imgsz 224,320 (khớp MaixCAM)
+
+filter:
+  enabled: true                  # USE_FILTER: chạy SkeletonFilter trước khi ghi CSV / vẽ
+  alpha: 0.5                     # (giữ cho tương thích; làm mượt giờ dùng One Euro bên dưới)
+  min_conf: 0.25                 # = SkeletonFilter(min_conf=kp_conf) của extract_skeleton.py
+  max_hold_frames: 5
+  history_size: 3
+  jump_ratio: 0.65
+  min_jump: 0.04
+  max_bone_ratio: 2.5
+  collapse_ratio: 0.5
+  max_gap_frames: 15
+  min_cutoff: 1.5                # One Euro: nhỏ hơn = mượt hơn khi đứng yên
+  beta: 4.0                      # One Euro: lớn hơn = bám nhanh hơn khi chuyển động (ngã)
+  smooth_bbox: true
+  default_dt: 0.1                # dt dùng khi t không tăng
+
+draw:
+  min_conf: 0.35                 # SkeletonDraw + lớp vẽ trên trình phát
+  show_bbox: true                # hộp bao + "person <score>" trên luồng trực tiếp
+  show_score: true
+  show_kp_conf: false            # in conf từng khớp
+
+check:                           # tham số kiểm tra CSV cho xử lý chuỗi
+  window_s: 2.0
+  stride_s: 0.25
+  kpt_conf_thres: 0.2
+  max_missing: 0.4
+
+classifier:                      # bộ phân loại ngã (src/classifier.py) — chọn kiến trúc theo checkpoint
+  checkpoint: models/shiftgcn_best.pt   # B2 Shift-GCN (17 khung); B1: models/b1_lstm.pt
+  threshold: null                # null = ngưỡng trong checkpoint (Shift-GCN: 0.5; B1: chọn trên val)
+  stride_frames: 1               # dự đoán mỗi khung, giống stride 1 khung lúc tạo datasetv1
+  window_size: null              # null = lấy từ checkpoint (17 khung = 1.7 s @ 10 fps)
+  device: null
+  speed_gate: {enabled: false}   # cổng tốc độ chỉnh cho lstm_v6; model v1 chưa hiệu chỉnh -> tắt
+
+dataset:                         # run_web.py build-dataset / nút "Tạo dataset" -> output/<cấu hình>/dataset/windows.npz
+  win_sec: 1.7                   # 17 khung @ 10 fps, khớp model v1
+  stride_sec: 0.5
+  min_overlap: 0.3               # cửa sổ chồng >= 30% đoạn [fall_start_s, fall_end_s] -> nhãn NGÃ
+  min_valid_ratio: 0.0           # bỏ cửa sổ có tỉ lệ khung có người thấp hơn (0 = giữ hết)
