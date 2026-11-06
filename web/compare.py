@@ -62,9 +62,11 @@ def _status(true_fall: bool, pred_fall: bool) -> str:
 
 
 def compare_models(checkpoints, data_path, split: str = "test", device: str | None = "cpu",
-                   runs: int = 100, n_boot: int = 1000, loader=None) -> dict:
+                   runs: int = 100, n_boot: int = 1000, loader=None, speed_gate: dict | None = None) -> dict:
     """checkpoints: danh sách đường dẫn .pt. loader(path, device) -> đối tượng giống FallClassifier
-    (mặc định FallClassifier; test truyền bộ giả)."""
+    (mặc định FallClassifier; test truyền bộ giả).
+    speed_gate: dict SpeedGate (src/motion.py). Nếu bật, mỗi model có thêm biến thể "<tên> + tốc độ"
+    (chỉ tính là ngã khi qua cổng tốc độ) để so có/không cổng trên cùng dữ liệu."""
     if loader is None:
         from src.classifier import FallClassifier
 
@@ -83,8 +85,23 @@ def compare_models(checkpoints, data_path, split: str = "test", device: str | No
         raise ValueError(f"Tập {split} rỗng.")
     vid = np.asarray(vid).astype(str)
 
+    from src.motion import SpeedGate, motion_features
+    gate = SpeedGate.from_dict(speed_gate) if speed_gate else None
+    if gate is not None and not gate.enabled:
+        gate = None
+    speed = motion_features(X, data["fps"]) if gate is not None else None
+
     models, probs, warn = [], {}, []
     used_names: set[str] = set()
+
+    def add_entry(name, base: dict, prob, thr):
+        probs[name] = (prob, thr)
+        m05, mthr = metrics_at(y, prob, 0.5), metrics_at(y, prob, thr)
+        auc = roc_auc(y, prob)
+        models.append(dict(base, name=name, threshold=round(thr, 2), auc=None if auc is None else round(auc, 4),
+                           at05=_r(m05), atthr=_r(mthr), video=_r(video_level(y, prob, vid, thr)),
+                           roc=roc_curve(y, prob), f1_curve=f1_curve(y, prob)))
+
     for p in paths:
         clf = loader(p, device)
         name = p.stem if p.stem not in used_names else f"{p.stem}_{len(used_names)}"
@@ -93,21 +110,21 @@ def compare_models(checkpoints, data_path, split: str = "test", device: str | No
             warn.append(f"{name}: checkpoint dùng cửa sổ {clf.window_size} khung, dataset {X.shape[1]} khung")
         prob = np.asarray(clf.predict_batch(X), dtype=np.float64)
         thr = float(clf.fall_threshold)
-        probs[name] = (prob, thr)
-        m05, mthr = metrics_at(y, prob, 0.5), metrics_at(y, prob, thr)
-        mv = video_level(y, prob, vid, thr)
-        auc = roc_auc(y, prob)
-        models.append(dict(
-            name=name, file=p.as_posix() if not p.is_relative_to(resolve(".")) else p.relative_to(resolve(".")).as_posix(),
+        base = dict(
+            file=p.as_posix() if not p.is_relative_to(resolve(".")) else p.relative_to(resolve(".")).as_posix(),
             arch=getattr(clf, "arch", "?"), params=int(getattr(clf, "num_params", 0)),
             size_mb=round(p.stat().st_size / 1e6, 2) if p.exists() else None,
             latency_ms=_latency_ms(clf, X, runs), device=str(getattr(clf, "device", "")),
-            threshold=round(thr, 2), auc=None if auc is None else round(auc, 4),
-            at05=_r(m05), atthr=_r(mthr), video=_r(mv),
-            roc=roc_curve(y, prob), f1_curve=f1_curve(y, prob),
             meta={k: v for k, v in (getattr(clf, "meta", {}) or {}).items()
                   if k in ("epoch", "val_f1", "val_acc", "model_kwargs", "fps", "window_size", "seed")},
-        ))
+            gate=None)
+        add_entry(name, base, prob, thr)
+        if gate is not None:
+            # Biến thể có cổng tốc độ: cửa sổ không qua cổng coi như P(ngã) = 0 (hệ thống không báo ngã).
+            ok = gate.passes(speed, prob)
+            add_entry(f"{name} + tốc độ", dict(base, gate=gate.to_dict(), gate_text=gate.describe(),
+                                                 gated_windows=int(((prob >= thr) & ~ok).sum())),
+                      np.where(ok, prob, 0.0), thr)
 
     preds_thr = {n: (pr >= t).astype(int) for n, (pr, t) in probs.items()}
     boot = bootstrap_by_video(y, preds_thr, vid, n_boot=n_boot) if n_boot > 0 else {"ci": {}, "diff": {}}
@@ -147,6 +164,10 @@ def compare_models(checkpoints, data_path, split: str = "test", device: str | No
                      subjects=sorted({subject_of(v) for v in vid}), window_size=int(X.shape[1]),
                      fps=data["fps"]),
         models=models, pairs=pairs, videos=videos, windows=windows, warnings=warn,
+        gate=gate.to_dict() if gate is not None else None,
+        speed={str(v): dict(shoulder_drop=[round(float(x), 2) for x in speed["shoulder_drop"][vid == v]],
+                            rotation=[round(float(x), 1) for x in speed["rotation"][vid == v]])
+               for v in sorted(set(vid))} if gate is not None else None,
         verdict=verdict(models, pairs), generated=time.strftime("%Y-%m-%d %H:%M"),
     )
 

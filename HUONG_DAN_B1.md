@@ -12,6 +12,24 @@ không cần Google Colab, rồi so sánh với ST-GCN (`best_stgcn.pt` của co
 
 ---
 
+## 0. Cách nhanh nhất (chỉ cần đọc mục này)
+
+Chỉ có **2 model cuối**, mỗi model **một lệnh**:
+
+```bash
+python train.py --arch lstm  --final      # -> models/lstm.pt
+python train.py --arch stgcn --final      # -> models/stgcn.pt
+python evaluate.py models/stgcn.pt models/lstm.pt --data data/dataset_clean_all.npz --html output/compare.html
+```
+
+`--final` tự làm: dùng dataset đã sửa nhãn (`data/dataset_clean.npz`) → train có val để biết số epoch tốt nhất →
+train lại trên **train + val** đúng số epoch đó, ngưỡng 0.5 → chỉ giữ `models/<arch>.pt` (file tạm tự xóa).
+Web tự chọn `models/lstm.pt` (ô Model). Trong VSCode: F5 → các mục có dấu ★.
+
+Các mục bên dưới là chi tiết / tùy chọn nâng cao — không bắt buộc.
+
+---
+
 ## 1. Có cần Google Colab không?
 
 **Không.** Colab chỉ cho GPU miễn phí. Dataset của nhóm rất nhỏ:
@@ -403,7 +421,10 @@ python train.py --arch lstm  --data data/dataset_clean.npz --out models/lstm_cle
 python train.py --arch stgcn --data data/dataset_clean.npz --out models/stgcn_clean.pt
 ```
 
-`--fix` đổi nhãn các cửa sổ **nằm yên** từ 1 → 0 ở train và val (75 cửa sổ), giữ nguyên X. Model vẫn học cú ngã
+`--fix` đổi nhãn các cửa sổ **nằm yên** từ 1 → 0 ở train và val (75 cửa sổ), giữ nguyên X.
+`data/dataset_clean_all.npz` (tạo bằng `--fix --fix-test`) sửa thêm 21 cửa sổ ở **test** — dùng file này để
+**đánh giá** model đã train trên nhãn sạch, vì test nhãn cũ vẫn chấm "nằm yên = ngã" là đúng và sẽ thiên vị model
+cũ học thói quen đó. Model vẫn học cú ngã
 từ các cửa sổ có chuyển động rơi. Tập test **giữ nguyên** để so được với `best_stgcn.pt` cũ; thêm `--fix-test`
 nếu nhóm thống nhất "nằm yên sau ngã không tính là ngã" cho cả đánh giá (khi đó so mọi model trên file mới).
 
@@ -458,7 +479,81 @@ bằng val, rồi mới gộp val để train bản cuối.
 
 ---
 
-## 13. Nếu vẫn muốn chạy trên Colab
+## 13. Phân biệt NGÃ với NẰM XUỐNG / LEO LÊN GIƯỜNG bằng tốc độ (cổng tốc độ)
+
+Leo lên giường rồi nằm, ngả lưng, ngồi giường rồi nằm xuống... trong 2 giây skeleton trông giống cú ngã có chống
+tay. Khác biệt tổng quát nhất là **tốc độ**: ngã nhanh và mất kiểm soát, nằm xuống chậm và có kiểm soát. Cách này
+dùng được cả khi **ngã trên giường** (ngồi mép giường rồi ngã ngửa: hông gần như không hạ nhưng thân **xoay rất nhanh**),
+trường hợp mà vẽ vùng giường không giải quyết được.
+
+### Đo hai tốc độ (`src/motion.py`)
+
+| Đặc trưng | Ý nghĩa | Đơn vị |
+|---|---|---|
+| Vai hạ | Tốc độ đi xuống lớn nhất của trung điểm hai vai (trung bình 0,3 s) | thân/giây (thân = độ dài xương trung vị của chính người đó → không phụ thuộc xa/gần camera) |
+| Thân xoay | Tốc độ thân chuyển từ đứng sang nằm lớn nhất | độ/giây |
+
+Đo trên `data/dataset.npz` (79 video ngã, 31 video sinh hoạt có nằm xuống):
+
+| Tốc độ vai hạ (trung vị) | Ngã | Nằm xuống (ADL) |
+|---|---|---|
+| | 4,2 thân/s | 2,05 thân/s |
+
+| Nếu chỉ dùng vai hạ ≥ | Giữ được video ngã | Loại được video nằm xuống |
+|---|---|---|
+| 1,5 thân/s | 86% | 35% |
+| 2,5 thân/s | 77% | 68% |
+| 3,5 thân/s | 58% | 90% |
+
+→ Tốc độ **tách được phần lớn** nhưng **không tuyệt đối**: khoảng 15–25% cú ngã có tốc độ đo được thấp (ngã
+hướng về phía camera — camera 2D không thấy chuyển động theo chiều sâu —, ngã trượt chậm, hoặc nhãn lệch).
+Vì vậy tốc độ **không thay model** mà là **cổng xác nhận** sau model:
+
+```
+NGÃ  ⇔  P(ngã) ≥ ngưỡng  VÀ  ( vai hạ ≥ a  HOẶC  thân xoay ≥ b  HOẶC  P(ngã) ≥ c )
+```
+
+`c` (mặc định 0,95): model rất chắc chắn thì vẫn báo ngã dù đo tốc độ thấp, để không bỏ sót cú ngã hướng về camera.
+
+### Chọn ngưỡng a, b, c
+
+**Đừng đoán** — chọn trên tập val, với ràng buộc **không làm mất video ngã nào**:
+
+```bash
+python calibrate_gate.py models/best_lstm.pt --data data/dataset_clean.npz
+python calibrate_gate.py models/best_lstm.pt --data data/dataset_clean.npz --save   # ghi vào checkpoint
+```
+
+Script thử mọi tổ hợp, chỉ giữ tổ hợp có recall theo video **bằng** khi không có cổng, xếp theo F1 và số video
+sinh hoạt bị báo nhầm, rồi in kết quả test (chỉ để xem). `--save` lưu vào checkpoint → web và `main.py` tự dùng.
+Model đã gộp val (mục 12) thì chọn trên train: `--split train` (kém tin cậy hơn, kiểm tra lại trên video thật).
+
+### Dùng
+
+- **Web:** hàng **Cổng tốc độ** dưới ô Model: bật/tắt và chỉnh ngưỡng trực tiếp. Khung trạng thái hiện tốc độ
+  đo được ("vai hạ 5,6 thân/s · thân xoay 176°/s"). Khi model báo ngã nhưng chuyển động chậm, khung hiện màu cam
+  **KHÔNG NGÃ · CHUYỂN ĐỘNG CHẬM** và trên biểu đồ là ô vuông rỗng màu cam — nhìn vào đây để chỉnh ngưỡng trên
+  video leo giường / ngả lưng / ngã thật của nhóm.
+- **main.py:** `python main.py --source video.mp4 --gate on --gate-shoulder 2.5 --gate-rotation 200`;
+  `--log out.csv` ghi cả tốc độ và cột `gated` của từng lần dự đoán.
+- **So sánh:** trang **So sánh model** → tích **Thêm biến thể có cổng tốc độ**: mỗi model thêm một dòng
+  "+ tốc độ" để thấy cổng giảm bao nhiêu báo nhầm và có làm mất cú ngã nào không (cột "Video ngã phát hiện được").
+  Dòng lệnh: `python evaluate.py models/best_lstm.pt --gate --html output/gate.html`.
+- **Cấu hình:** `classifier.speed_gate` trong `configs/*.yaml` (null = dùng giá trị trong checkpoint).
+
+### Tăng độ chính xác của tốc độ
+
+- **Quay / trích ở 15–20 fps** thay vì 10: chuyển động ngã diễn ra trong ~0,5 s, 10 fps chỉ có ~5 khung.
+  (Phải trích lại skeleton và train lại; cửa sổ 2 s khi đó dài 30–40 khung.)
+- **Đặt camera chéo góc** so với hướng hay ngã (không đặt thẳng trước giường), để chuyển động ngã nằm trong mặt
+  phẳng ảnh.
+- **Thêm dữ liệu** nằm xuống / leo giường / ngồi giường rồi nằm ở nhiều tốc độ (nhãn ADL) và ngã có chống tay, ngã
+  trên giường (nhãn ngã). Khi đủ dữ liệu, model LSTM (đã có đặc trưng vận tốc) tự học được ranh giới và cổng tốc độ
+  chỉ còn là lớp an toàn.
+
+---
+
+## 14. Nếu vẫn muốn chạy trên Colab
 
 Không cần sửa code. Trong một ô notebook:
 

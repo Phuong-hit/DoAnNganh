@@ -81,6 +81,16 @@
   @keyframes blink { 50% { opacity: .35; } }
   @media (prefers-reduced-motion: reduce) { .st-fall .fall-state { animation: none; } }
   .fall-sub { font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+  .fall-speed { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; margin-top: 2px; }
+  .fall-speed b { color: var(--text); }
+  .fallpanel.st-slow { border-color: var(--warn); }
+  .st-slow .fall-state { color: var(--warn); font-size: 21px; }
+  .st-slow .fall-pct { color: var(--warn); }
+  .st-slow .pbar > i { background: var(--warn); }
+  .gaterow { font-size: 13px; margin: -2px 0 10px; }
+  .gaterow input[type=number] { width: 64px; padding: 4px 6px; border: 1px solid var(--line); border-radius: 6px;
+                                background: var(--bg); color: var(--text); }
+  .gaterow .muted { font-size: 12px; }
   .fall-pct { font-size: 26px; font-weight: 800; font-variant-numeric: tabular-nums; text-align: right; line-height: 1.15; }
   .st-fall .fall-pct { color: var(--bad); } .st-ok .fall-pct { color: var(--ok); }
   .pbar { position: relative; height: 10px; background: var(--line); border-radius: 5px; overflow: hidden; margin: 4px 0 2px; }
@@ -131,10 +141,18 @@
       <label class="switch">Model
         <select id="clfSel" onchange="setClassifier(this.value)" title="Checkpoint trong thư mục models/"></select></label>
     </div>
+    <div class="row gaterow" id="gaterow" title="Chỉ xác nhận NGÃ khi chuyển động đủ nhanh: nằm xuống, leo lên giường, ngả lưng chậm sẽ không bị báo ngã">
+      <label class="switch"><input type="checkbox" id="gateOn" onchange="setGate()"> Cổng tốc độ</label>
+      <label>vai hạ ≥ <input type="number" id="gateSh" step="0.25" min="0" onchange="setGate()"> thân/s</label>
+      <label>hoặc xoay ≥ <input type="number" id="gateRot" step="10" min="0" onchange="setGate()"> °/s</label>
+      <label>hoặc P ≥ <input type="number" id="gateKeep" step="0.01" min="0" max="1" onchange="setGate()"></label>
+      <span class="muted">(chọn ngưỡng bằng calibrate_gate.py)</span>
+    </div>
     <div class="fallpanel" id="fallpanel">
       <div>
         <div class="fall-state" id="fallState">—</div>
         <div class="fall-sub" id="fallSub"></div>
+        <div class="fall-speed" id="fallSpeed"></div>
       </div>
       <div class="fall-prob">
         <div class="fall-pct" id="fallPct">--</div>
@@ -213,16 +231,24 @@ function renderFall(o) {
   } else if (o.state === "idle") title = "CHƯA CÓ NGUỒN";
   else if (o.state === "collect") title = o.win ? `ĐANG GOM KHUNG ${o.collected ?? 0}/${o.win}` : "ĐANG GOM KHUNG";
   else if (o.state === "fall") { title = "NGÃ!"; cls = "st-fall"; }
+  else if (o.state === "slow") { title = "KHÔNG NGÃ · CHUYỂN ĐỘNG CHẬM"; cls = "st-slow"; }
   else { title = "KHÔNG NGÃ"; cls = "st-ok"; }
   if (o.finished && o.state !== "off") title += " (đã hết video)";
   panel.className = "fallpanel " + cls;
   $("fallState").textContent = title;
   $("fallSub").textContent = o.sub || "";
+  const sp = o.speed || null, g = CLF.gate || {};
+  $("fallSpeed").innerHTML = sp && sp.shoulder_drop != null
+    ? `Tốc độ: vai hạ <b>${sp.shoulder_drop.toFixed(1)}</b> thân/s · thân xoay <b>${Math.round(sp.rotation)}</b>°/s` +
+      (g.enabled ? ` · cổng tốc độ: ${esc(CLF.gate_text)}` : " · cổng tốc độ: tắt") +
+      (o.state === "slow" ? " → model báo ngã nhưng chuyển động chậm, không tính là ngã" : "")
+    : "";
   $("fallPct").textContent = pct == null ? "--" : pct + "%";
   $("fallBar").style.width = (pct ?? 0) + "%";
   $("fallThr").style.left = `calc(${thr * 100}% - 1px)`;
   $("fallThrTxt").textContent = Math.round(thr * 100) + "%";
-  lastFall = o.state === "fall" ? `NGÃ (${pct}%)` : (o.state === "ok" ? `không ngã (${pct}%)` : null);
+  lastFall = o.state === "fall" ? `NGÃ (${pct}%)` : (o.state === "ok" ? `không ngã (${pct}%)`
+             : (o.state === "slow" ? `không ngã, chậm (${pct}%)` : null));
   drawChart(o.hist || [], thr, o.cursor, o.span);
   const ev = o.events || [];
   $("fallEvents").innerHTML = o.state === "off" ? "" : (ev.length
@@ -252,8 +278,9 @@ function drawChart(hist, thr, cursor, span) {
   const t0 = span ? 0 : hist[0][0], t1 = span || Math.max(hist[hist.length - 1][0], t0 + 1);
   const X = t => pad + (t - t0) / (t1 - t0) * (w - 2 * pad), Y = p => H - pad - p * (H - 2 * pad);
   ctx.fillStyle = cBad; ctx.globalAlpha = 0.25;           // vùng vượt ngưỡng
+  const isFall = (e) => e.length > 2 && e[2] != null ? e[2] === 1 : e[1] >= thr;   // nhãn cuối (sau cổng tốc độ)
   for (let k = 0; k < hist.length; k++) {
-    if (hist[k][1] < thr) continue;
+    if (!isFall(hist[k])) continue;
     const xa = X(hist[k][0]), xb = k + 1 < hist.length ? X(hist[k + 1][0]) : xa + 3;
     ctx.fillRect(xa, pad, Math.max(2, xb - xa), H - 2 * pad);
   }
@@ -263,7 +290,12 @@ function drawChart(hist, thr, cursor, span) {
   ctx.strokeStyle = cOk; ctx.lineWidth = 2; ctx.beginPath();
   hist.forEach(([t, p], k) => k ? ctx.lineTo(X(t), Y(p)) : ctx.moveTo(X(t), Y(p)));
   ctx.stroke();
-  hist.forEach(([t, p]) => { if (p >= thr) { ctx.fillStyle = cBad; ctx.fillRect(X(t) - 2, Y(p) - 2, 4, 4); } });
+  const cWarn = css.getPropertyValue("--warn").trim();
+  hist.forEach((e) => {
+    const [t, p] = e;
+    if (isFall(e)) { ctx.fillStyle = cBad; ctx.fillRect(X(t) - 2, Y(p) - 2, 4, 4); }
+    else if (p >= thr) { ctx.strokeStyle = cWarn; ctx.lineWidth = 1.5; ctx.strokeRect(X(t) - 2.5, Y(p) - 2.5, 5, 5); }  // bị cổng tốc độ bỏ
+  });
   if (cursor != null) { ctx.fillStyle = css.getPropertyValue("--text").trim(); ctx.fillRect(X(cursor) - 1, pad, 2, H - 2 * pad); }
   ctx.fillStyle = cMuted; ctx.font = "11px system-ui, sans-serif";
   ctx.fillText(`${t0.toFixed(0)} s`, 2, h - 2);
@@ -271,15 +303,48 @@ function drawChart(hist, thr, cursor, span) {
   const lbl = "P(ngã) 0–100%"; ctx.fillText(lbl, (w - ctx.measureText(lbl).width) / 2, h - 2);
 }
 
+function fillGate() {
+  const g = CLF.gate;
+  $("gaterow").style.display = CLF.name ? "" : "none";
+  if (!g) return;
+  $("gateOn").checked = !!g.enabled;
+  const put = (id, v) => { if (document.activeElement !== $(id)) $(id).value = v; };   // không ghi đè ô đang gõ
+  put("gateSh", g.shoulder_drop); put("gateRot", g.rotation); put("gateKeep", g.keep_if_p_above ?? "");
+  ["gateSh", "gateRot", "gateKeep"].forEach(id => { $(id).disabled = !g.enabled; });
+}
+
+let gateSeq = 0;                 // chỉ áp dụng phản hồi của lần chỉnh MỚI NHẤT (tránh ghi đè ô đang nhập)
+async function setGate() {
+  const my = ++gateSeq;
+  const num = (id) => $(id).value === "" ? null : Number($(id).value);
+  const body = {enabled: $("gateOn").checked, shoulder_drop: num("gateSh"), rotation: num("gateRot"),
+                keep_if_p_above: num("gateKeep")};
+  if (body.shoulder_drop == null) delete body.shoulder_drop;
+  if (body.rotation == null) delete body.rotation;
+  const res = await fetch("/api/classifier/gate", {method: "POST", headers: {"Content-Type": "application/json"},
+                                                    body: JSON.stringify(body)});
+  const d = await res.json();
+  if (my !== gateSeq) return;
+  if (!res.ok) { $("vnote").textContent = "Cổng tốc độ: " + (d.error || res.status); return; }
+  CLF = d; fillGate();
+  if (player) loadPrediction(player.id);              // tính lại nhãn của video đang mở
+  else { const s = liveSource(); if (s) startLive(s); }
+}
+
 function fillModelSelect() {
   const sel = $("clfSel");
   const cur = CLF.path || "";
   const opts = [["auto", "tự chọn (LSTM nếu có)"], ...CLF.available.map(a => [a, a.replace(/^models\//, "")]), ["", "tắt"]];
   sel.innerHTML = opts.map(([v, t]) => `<option value="${esc(v)}">${esc(t)}</option>`).join("");
-  sel.value = CLF.available.includes(cur) ? cur : (CLF.name ? "auto" : "");
+  // hiện đúng mục đã chọn: tên file, "tự chọn" hoặc "tắt"
+  const want = CLF.selected ?? (CLF.available.includes(cur) ? cur : (CLF.name ? "auto" : ""));
+  sel.value = want === "auto" || want === "" || CLF.available.includes(want) ? want : "auto";
+  const autoOpt = sel.querySelector('option[value="auto"]');
+  if (autoOpt && want === "auto" && CLF.path) autoOpt.textContent = `tự chọn → ${CLF.path.replace(/^models\//, "")}`;
   $("hdrClf").textContent = CLF.name ? `${CLF.name} (${(CLF.params || 0).toLocaleString()} tham số)` : "tắt";
   $("useClf").disabled = !CLF.name;
   if (CLF.name && !$("useClf").dataset.touched) $("useClf").checked = true;
+  fillGate();
 }
 
 async function setClassifier(value) {
@@ -393,22 +458,24 @@ function drawPose(ctx, w, h, kp, valid) {
 }
 
 // Nhãn kết quả ở góc phải trên + dải P(ngã) theo thời gian ở mép dưới (giống draw_fall của web/engine.py).
-function drawFall(ctx, w, h, p, thr) {
+function drawFall(ctx, w, h, p, thr, st) {
+  st = st || (p == null ? "collect" : (p >= thr ? "fall" : "ok"));
   const pr = player.pred, dur = player.video.duration || (pr.t.length ? pr.t[pr.t.length - 1] : 0);
   if (dur > 0) {
     const bh = Math.max(6, h / 40);
     ctx.fillStyle = "rgba(0,0,0,.45)"; ctx.fillRect(0, h - bh, w, bh);
     for (let k = 0; k < pr.t.length; k++) {
       const x0 = pr.t[k] / dur * w, x1 = (k + 1 < pr.t.length ? pr.t[k + 1] : dur) / dur * w;
-      ctx.fillStyle = pr.p[k] >= thr ? "#ff2d2d" : `rgba(0,200,90,${0.25 + 0.75 * pr.p[k]})`;
+      const f = pr.label ? pr.label[k] === 1 : pr.p[k] >= thr;
+      ctx.fillStyle = f ? "#ff2d2d" : (pr.p[k] >= thr ? "#e69500" : `rgba(0,200,90,${0.25 + 0.75 * pr.p[k]})`);
       ctx.fillRect(x0, h - bh * Math.max(0.2, pr.p[k]), Math.max(1, x1 - x0), bh * Math.max(0.2, pr.p[k]));
     }
     ctx.fillStyle = "#fff"; ctx.fillRect(player.video.currentTime / dur * w - 1, h - bh, 2, bh);
   }
-  const text = p == null ? "FALL? ..." : (p >= thr ? `FALL ${p.toFixed(2)}` : `no fall ${p.toFixed(2)}`);
+  const text = p == null ? "FALL? ..." : ({fall: `FALL ${p.toFixed(2)}`, slow: `slow ${p.toFixed(2)}`})[st] || `no fall ${p.toFixed(2)}`;
   ctx.font = `bold ${Math.max(14, w / 30)}px system-ui, sans-serif`;
   const tw = ctx.measureText(text).width, th = Math.max(14, w / 30);
-  ctx.fillStyle = p == null ? "#808080" : (p >= thr ? "#d32f2f" : "#2e7d32");
+  ctx.fillStyle = p == null ? "#808080" : ({fall: "#d32f2f", slow: "#b35900"})[st] || "#2e7d32";
   ctx.fillRect(w - tw - 20, 8, tw + 12, th + 12);
   ctx.fillStyle = "#fff"; ctx.fillText(text, w - tw - 14, 8 + th + 2);
 }
@@ -422,7 +489,7 @@ async function loadPrediction(id) {
   if (player.pred) {                      // các lần chuyển sang NGÃ trong cả video
     let prev = false;
     player.pred.t.forEach((t, k) => {
-      const f = player.pred.p[k] >= player.pred.threshold;
+      const f = player.pred.label ? player.pred.label[k] === 1 : player.pred.p[k] >= player.pred.threshold;
       if (f && !prev) player.events.push({t, p: player.pred.p[k]});
       prev = f;
     });
@@ -474,14 +541,18 @@ async function showVideo(id) {
                        ["Khung skeleton", `${i + 1} / ${s.t.length}`]];
         const pr = player.pred;
         if (pr && $("useClf").checked) {
-          const p = pr.t.length && s.t[i] >= pr.t[0] ? pr.p[frameIndex(pr.t, s.t[i])] : null;
-          drawFall(player.ctx, w, h, p, pr.threshold);
-          renderFall({state: p == null ? "collect" : (p >= pr.threshold ? "fall" : "ok"), p, thr: pr.threshold,
+          const k = pr.t.length && s.t[i] >= pr.t[0] ? frameIndex(pr.t, s.t[i]) : -1;
+          const p = k >= 0 ? pr.p[k] : null;
+          const lab = k >= 0 ? (pr.label ? pr.label[k] : +(p >= pr.threshold)) : null;
+          const st = p == null ? "collect" : (lab ? "fall" : (p >= pr.threshold ? "slow" : "ok"));
+          drawFall(player.ctx, w, h, p, pr.threshold, st);
+          renderFall({state: st, p, thr: pr.threshold,
                       sub: `${pr.model} · video ${player.id} · t = ${s.t[i].toFixed(1)} s` + (s.valid[i] ? "" : " · không thấy người"),
-                      hist: pr.t.map((t, k) => [t, pr.p[k]]), cursor: s.t[i],
+                      speed: k >= 0 && pr.shoulder_drop ? {shoulder_drop: pr.shoulder_drop[k], rotation: pr.rotation[k]} : null,
+                      hist: pr.t.map((t, j) => [t, pr.p[j], pr.label ? pr.label[j] : null]), cursor: s.t[i],
                       span: player.video.duration || null, events: player.events});
           items.push(["P(ngã)", p == null ? "đang gom khung" : p.toFixed(2)],
-                     ["Kết quả", p == null ? "-" : (p >= pr.threshold ? "NGÃ" : "không ngã")]);
+                     ["Kết quả", p == null ? "-" : ({fall: "NGÃ", slow: "không ngã (chậm)", ok: "không ngã"})[st]]);
         }
         $("stats").innerHTML = statHtml(items);
       }
@@ -513,7 +584,8 @@ async function pollLive() {
   if (!d.frames) { $("stats").innerHTML = statHtml([["Trạng thái", "đang mở nguồn / nạp model..."]]);
                    renderFall({state: "idle", sub: "đang mở nguồn / nạp model..."}); return; }
   if (!d.classifier) renderFall({state: "off", sub: d.classifier_off});
-  else renderFall({state: d.fall_label == null ? "collect" : (d.fall_label ? "fall" : "ok"), p: d.fall_prob,
+  else renderFall({state: d.fall_label == null ? "collect" : (d.fall_label ? "fall" : (d.fall_gated ? "slow" : "ok")),
+                   p: d.fall_prob, speed: d.speed,
                    thr: d.threshold, collected: d.collected, win: d.window_size, hist: d.fall_hist, cursor: d.t,
                    events: d.fall_events, finished: d.finished,
                    sub: `${d.classifier} · ${d.source} · t = ${d.t} s` + (d.valid ? "" : " · không thấy người")});

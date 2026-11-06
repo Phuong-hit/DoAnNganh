@@ -41,6 +41,7 @@
   .lead { color: var(--muted); font-size: 12.5px; margin: 0 0 10px; }
   .row { display: flex; gap: 8px 16px; flex-wrap: wrap; align-items: center; }
   label { display: inline-flex; gap: 6px; align-items: center; }
+  input[type=number] { padding: 6px 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--text); font: inherit; }
   select, button { padding: 7px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg);
                    color: var(--text); font: inherit; max-width: 100%; }
   button { cursor: pointer; }
@@ -116,6 +117,11 @@
       <label>Dataset <select id="dataSel"></select></label>
       <label>Tập <select id="splitSel"><option value="test">test</option><option value="val">val</option>
         <option value="train">train</option></select></label>
+      <label title="Mỗi model thêm một dòng '+ tốc độ': chỉ tính là ngã khi chuyển động đủ nhanh">
+        <input type="checkbox" id="gateChk"> Thêm biến thể có cổng tốc độ</label>
+      <label>vai ≥ <input type="number" id="gSh" value="2.5" step="0.25" min="0" style="width:64px"></label>
+      <label>xoay ≥ <input type="number" id="gRot" value="200" step="10" min="0" style="width:64px"></label>
+      <label>P ≥ <input type="number" id="gKeep" value="0.95" step="0.01" min="0" max="1" style="width:64px"></label>
       <button class="primary" id="runBtn" onclick="runCompare()">So sánh</button>
       <span class="status muted" id="runStatus"></span>
     </div>
@@ -288,6 +294,8 @@ function renderMetricsTable(D) {
     ["Số tham số", M.map(m => m.params), false, fmtInt],
     ["Dung lượng (MB)", M.map(m => m.size_mb), false, (v) => v ?? "–"],
     ["Thời gian / cửa sổ (ms)", M.map(m => m.latency_ms), false, (v) => v == null ? "–" : v.toFixed(2)],
+    ["Cổng tốc độ", M.map(m => m.gate_text || "–"), null, (v) => v],
+    ["Cửa sổ model báo ngã bị cổng bỏ", M.map(m => m.gated_windows ?? null), null, (v) => v == null ? "–" : v],
     ["Epoch tốt nhất · val F1", M.map(m => m.meta || {}), null,
       (v) => v.epoch != null ? `${v.epoch} · ${v.val_f1 != null ? Number(v.val_f1).toFixed(3) : "–"}` : "–"],
   ];
@@ -522,6 +530,10 @@ async function initControls() {
   box.innerHTML = '<span class="muted">Model:</span>' + (OPTIONS.checkpoints.length
     ? OPTIONS.checkpoints.map(c => `<label><input type="checkbox" value="${esc(c)}" ${pre.includes(c) ? "checked" : ""}> ${esc(c.replace(/^models\//, ""))}</label>`).join("")
     : '<span class="warnbox">Chưa có checkpoint nào trong models/ (train bằng train.py trước).</span>');
+  if (OPTIONS.gate) {
+    $("gSh").value = OPTIONS.gate.shoulder_drop; $("gRot").value = OPTIONS.gate.rotation;
+    $("gKeep").value = OPTIONS.gate.keep_if_p_above ?? "";
+  }
   $("dataSel").innerHTML = OPTIONS.datasets.map(d => `<option>${esc(d)}</option>`).join("")
     || '<option value="">(không có dataset)</option>';
   if (OPTIONS.error) $("runStatus").innerHTML = `<span class="warnbox">${esc(OPTIONS.error)}</span>`;
@@ -530,12 +542,17 @@ async function initControls() {
 async function runCompare() {
   const cks = [...document.querySelectorAll("#modelBoxes input:checked")].map(i => i.value);
   if (!cks.length) { $("runStatus").textContent = "Chọn ít nhất một model."; return; }
-  if (cks.length > 4) { $("runStatus").textContent = "Chọn tối đa 4 model để biểu đồ còn đọc được."; return; }
+  const withGate = $("gateChk").checked;
+  if (cks.length > (withGate ? 2 : 4)) {
+    $("runStatus").textContent = withGate ? "Có cổng tốc độ: chọn tối đa 2 model (mỗi model thành 2 dòng)."
+                                          : "Chọn tối đa 4 model để biểu đồ còn đọc được."; return; }
   $("runBtn").disabled = true;
   $("runStatus").textContent = "Đang chạy các model trên tập dữ liệu (đo cả tốc độ)...";
   try {
     const res = await fetch("/api/compare", {method: "POST", headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({checkpoints: cks, data: $("dataSel").value, split: $("splitSel").value})});
+      body: JSON.stringify({checkpoints: cks, data: $("dataSel").value, split: $("splitSel").value,
+        speed_gate: withGate ? {enabled: true, shoulder_drop: Number($("gSh").value), rotation: Number($("gRot").value),
+                                keep_if_p_above: $("gKeep").value === "" ? null : Number($("gKeep").value)} : null})});
     const d = await res.json();
     if (!res.ok) { $("runStatus").innerHTML = `<span class="warnbox">Lỗi: ${esc(d.error)}</span>`; return; }
     DATA = d; SELVIDEO = null;

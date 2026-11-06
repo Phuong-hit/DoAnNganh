@@ -33,6 +33,7 @@ import numpy as np
 import torch
 
 from .features import normalize_clip
+from .motion import SpeedGate, motion_features
 from .skeleton_io import from_poses
 
 LABEL_NAMES = {0: "KHÔNG NGÃ", 1: "NGÃ"}
@@ -105,7 +106,7 @@ class FallClassifier:
     """
 
     def __init__(self, checkpoint_path, window_size=None, stride_frames=5, device=None,
-                 fall_threshold=None, verbose=True):
+                 fall_threshold=None, verbose=True, speed_gate: dict | None = None):
         self.checkpoint_path = Path(checkpoint_path)
         self.device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
         ckpt = load_checkpoint(self.checkpoint_path, self.device)
@@ -126,6 +127,8 @@ class FallClassifier:
                                     else (ckpt.get("threshold") or 0.5))
         self.meta = {k: v for k, v in ckpt.items() if k != "state"}
         self.train_fps = ckpt.get("fps")
+        # Cổng tốc độ (src/motion.py): tham số > giá trị chọn bằng calibrate_gate.py lưu trong checkpoint > tắt
+        self.gate = SpeedGate.from_dict(speed_gate if speed_gate is not None else ckpt.get("speed_gate"))
         if self.window_size < 1 or self.stride_frames < 1:
             raise ValueError("window_size và stride_frames phải >= 1.")
 
@@ -150,10 +153,21 @@ class FallClassifier:
         self.frames_since_prediction = 0
         self.last = None
 
-    def _result(self, p_fall: float) -> dict:
-        label = int(p_fall >= self.fall_threshold)
+    def _result(self, p_fall: float, speed: dict | None = None) -> dict:
+        model_label = int(p_fall >= self.fall_threshold)
+        gate_ok = True if speed is None else bool(self.gate.passes(speed, p_fall))
+        label = int(model_label and gate_ok)
         return {"label": label, "name": LABEL_NAMES[label], "probability": p_fall,
-                "probabilities": {"khong_nga": 1.0 - p_fall, "nga": p_fall}}
+                "probabilities": {"khong_nga": 1.0 - p_fall, "nga": p_fall},
+                "model_label": model_label,                 # model nói gì (chưa qua cổng tốc độ)
+                "gated": bool(model_label and not gate_ok), # model báo ngã nhưng chuyển động chậm -> bỏ
+                "speed": {k: round(float(v), 3) for k, v in (speed or {}).items()}}
+
+    def gate_labels(self, clips, p_fall, fps: float | None = None):
+        """Offline: clips [N,T,17,3] đã chuẩn hóa + P(ngã) [N] -> (nhãn cuối [N], đặc trưng tốc độ dict)."""
+        feats = motion_features(clips, fps or self.train_fps or 10.0)
+        ok = self.gate.passes(feats, p_fall)
+        return ((np.asarray(p_fall) >= self.fall_threshold) & ok).astype(np.int64), feats
 
     @torch.inference_mode()
     def predict_batch(self, clips) -> np.ndarray:
@@ -163,9 +177,10 @@ class FallClassifier:
         logits = self.model(to_model_input(clips).to(self.device))
         return torch.softmax(logits, dim=1)[:, 1].float().cpu().numpy()
 
-    def predict_clip(self, seq, mask, aspect=1.0) -> dict:
+    def predict_clip(self, seq, mask, aspect=1.0, fps: float | None = None) -> dict:
         clip = normalize_clip(seq, mask, aspect=aspect)
-        return self._result(float(self.predict_batch(clip[np.newaxis])[0]))
+        p = float(self.predict_batch(clip[np.newaxis])[0])
+        return self._result(p, motion_features(clip, fps or self.train_fps or 10.0))
 
     def update(self, pose):
         self.buffer.append(pose)
@@ -174,5 +189,5 @@ class FallClassifier:
             return None
         self.frames_since_prediction = 0
         item = from_poses(list(self.buffer))       # cùng quy ước với lúc tạo dataset
-        self.last = self.predict_clip(item["seq"], item["mask"], item.get("aspect", 1.0))
+        self.last = self.predict_clip(item["seq"], item["mask"], item.get("aspect", 1.0), fps=item.get("fps"))
         return self.last

@@ -5,7 +5,8 @@
   python run_web.py web --host 0.0.0.0      # cho máy khác trong mạng LAN truy cập
   python run_web.py scan                    # quét data/videos -> data/metadata.csv (giống nút "Quét video")
   python run_web.py check-csv               # kiểm tra mọi CSV của cấu hình hiện tại (thoát mã 1 nếu có lỗi)
-  python run_web.py build-dataset           # NPZ đã trích + nhãn metadata -> output/<cấu hình>/dataset/windows.npz
+  python run_web.py extract                 # trích skeleton mọi video trong metadata (giống nút "Trích tất cả")
+  python run_web.py build-dataset         # NPZ đã trích + nhãn metadata -> output/<cấu hình>/dataset/windows.npz
 
 Tùy chọn chung: --config configs/web.yaml   --set pose.backend=dummy --set source.target_fps=15
 """
@@ -67,6 +68,47 @@ def cmd_check(cfg, args):
     return 1 if bad else 0
 
 
+def cmd_extract(cfg, args):
+    """Giống nút "Trích tất cả": mọi video trong metadata -> output/<cấu hình>/{csv,npz}/<video_id>.*"""
+    import time
+    from web.engine import build_estimator, csv_dir, extract_to_csv, npz_dir
+    from web.videos import load_metadata
+    df = load_metadata(resolve(cfg["paths"]["metadata"]))
+    if args.limit:
+        df = df.head(args.limit)
+    cdir, ndir = csv_dir(cfg), npz_dir(cfg)
+    todo = [r for r in df.itertuples()
+            if args.overwrite or not ((cdir / f"{r.video_id}.csv").exists() and (ndir / f"{r.video_id}.npz").exists())]
+    print(f"{len(df)} video trong metadata, cần trích {len(todo)} (đã có {len(df) - len(todo)}) -> {cdir.parent}")
+    if not todo:
+        return 0
+    est = build_estimator(cfg)
+    try:
+        import torch
+        gpu = torch.cuda.get_device_name(0) if torch.cuda.is_available() else "không có (torch bản CPU)"
+    except ImportError:
+        gpu = "?"
+    print(f"pose.device = {cfg['pose'].get('device') or 'tự chọn'} | GPU: {gpu}", flush=True)
+    t0, frames, errors = time.time(), 0, []
+    try:
+        for i, r in enumerate(todo, 1):
+            try:
+                s = extract_to_csv(str(resolve(r.path)), r.video_id, cdir / f"{r.video_id}.csv", cfg, estimator=est)
+                frames += int(s.get("frames", 0))
+            except Exception as e:
+                errors.append(f"{r.video_id}: {e}")
+            if i % 20 == 0 or i == len(todo):
+                dt = time.time() - t0
+                eta = dt / i * (len(todo) - i)
+                print(f"[{i}/{len(todo)}] {frames / dt:.1f} khung/s | đã {dt / 60:.1f} phút | còn ~{eta / 60:.1f} phút"
+                      f" | lỗi {len(errors)}", flush=True)
+    finally:
+        est.close()
+    for e in errors[:50]:
+        print("  LỖI", e)
+    return 1 if errors else 0
+
+
 def cmd_dataset(cfg, args):
     from web.dataset import build_dataset
     try:
@@ -94,13 +136,16 @@ def main(argv=None):
     sub.add_parser("scan", help="quét data/videos -> metadata.csv")
     p = sub.add_parser("check-csv", help="kiểm tra CSV cho xử lý chuỗi")
     p.add_argument("path", nargs="?", help="file hoặc thư mục CSV (mặc định: thư mục của cấu hình hiện tại)")
+    p = sub.add_parser("extract", help="trích skeleton mọi video trong metadata (giống nút Trích tất cả)")
+    p.add_argument("--overwrite", action="store_true", help="trích lại cả video đã có CSV + NPZ")
+    p.add_argument("--limit", type=int, default=None, help="chỉ lấy N video đầu (chạy thử)")
     p = sub.add_parser("build-dataset", help="tạo windows.npz cho huấn luyện (ST-GCN / LSTM)")
     p.add_argument("--out", default=None, help="file ra (mặc định output/<cấu hình>/dataset/windows.npz)")
     args = ap.parse_args(argv)
     if args.cmd is None:
         args = ap.parse_args((argv or sys.argv[1:]) + ["web"])
     cfg = load_config(args.config, args.set)
-    fn = {"web": cmd_web, "scan": cmd_scan, "check-csv": cmd_check, "build-dataset": cmd_dataset}[args.cmd]
+    fn = {"web": cmd_web, "scan": cmd_scan, "check-csv": cmd_check, "extract": cmd_extract, "build-dataset": cmd_dataset}[args.cmd]
     return fn(cfg, args) or 0
 
 

@@ -4,6 +4,25 @@
   "version": "0.2.0",
   "configurations": [
     {
+      "name": "★ Train LSTM (model cuối -> models/lstm.pt)",
+      "type": "debugpy", "request": "launch", "program": "${workspaceFolder}/train.py",
+      "args": ["--arch", "lstm", "--final"],
+      "cwd": "${workspaceFolder}", "console": "integratedTerminal", "justMyCode": true
+    },
+    {
+      "name": "★ Train ST-GCN (model cuối -> models/stgcn.pt)",
+      "type": "debugpy", "request": "launch", "program": "${workspaceFolder}/train.py",
+      "args": ["--arch", "stgcn", "--final"],
+      "cwd": "${workspaceFolder}", "console": "integratedTerminal", "justMyCode": true
+    },
+    {
+      "name": "★ So sánh LSTM vs ST-GCN (báo cáo HTML)",
+      "type": "debugpy", "request": "launch", "program": "${workspaceFolder}/evaluate.py",
+      "args": ["models/stgcn.pt", "models/lstm.pt", "--data", "data/dataset_clean_all.npz",
+               "--device", "cpu", "--html", "output/compare.html"],
+      "cwd": "${workspaceFolder}", "console": "integratedTerminal", "justMyCode": true
+    },
+    {
       "name": "B1: Train LSTM",
       "type": "debugpy", "request": "launch", "program": "${workspaceFolder}/train.py",
       "args": ["--arch", "lstm", "--data", "data/dataset.npz", "--out", "models/best_lstm.pt"],
@@ -26,6 +45,12 @@
       "type": "debugpy", "request": "launch", "program": "${workspaceFolder}/train.py",
       "args": ["--arch", "lstm", "--data", "data/dataset_clean.npz", "--merge-val",
                "--from-report", "models/best_lstm.report.json", "--out", "models/lstm_trainval.pt"],
+      "cwd": "${workspaceFolder}", "console": "integratedTerminal", "justMyCode": true
+    },
+    {
+      "name": "B1: Chọn ngưỡng cổng tốc độ (LSTM)",
+      "type": "debugpy", "request": "launch", "program": "${workspaceFolder}/calibrate_gate.py",
+      "args": ["models/best_lstm.pt", "--data", "data/dataset_clean.npz"],
       "cwd": "${workspaceFolder}", "console": "integratedTerminal", "justMyCode": true
     },
     {

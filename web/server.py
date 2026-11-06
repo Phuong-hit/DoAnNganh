@@ -74,7 +74,7 @@ def create_app(cfg: dict, check_model: bool = True) -> Flask:
         else:
             try:
                 c = build_classifier({**cfg, "classifier": {**cfg["classifier"], "checkpoint": str(path)}})
-                new.update(obj=c, name=c.name, path=_shown(path))
+                new.update(obj=c, name=c.name, path=Path(_shown(path)).as_posix())   # luôn dùng "/" (Windows)
             except ModuleNotFoundError as e:
                 new["error"] = f"chưa cài {e.name} (pip install torch)"
             except Exception as e:
@@ -107,10 +107,14 @@ def create_app(cfg: dict, check_model: bool = True) -> Flask:
 
     def _clf_info() -> dict:
         c = clf_state["obj"]
+        ck = (cfg.get("classifier") or {}).get("checkpoint")
+        sel = "" if not ck else ("auto" if str(ck).lower() == "auto" else Path(str(ck)).as_posix())
         return dict(name=clf_state["name"], error=clf_state["error"], path=clf_state["path"],
+                    selected=sel,                     # đúng mục người dùng đã chọn: "auto" | "models/x.pt" | ""
                     arch=c.arch if c else None, threshold=c.fall_threshold if c else None,
                     window_size=c.window_size if c else None, stride_frames=c.stride_frames if c else None,
-                    params=c.num_params if c else None, available=list_checkpoints(cfg))
+                    params=c.num_params if c else None, available=list_checkpoints(cfg),
+                    gate=c.gate.to_dict() if c else None, gate_text=c.gate.describe() if c else None)
 
     # ------------------------------------------------------------------ trang chính
     @app.get("/")
@@ -247,13 +251,15 @@ def create_app(cfg: dict, check_model: bool = True) -> Flask:
                                     threshold=clf.fall_threshold, window_size=clf.window_size,
                                     collected=len(clf.buffer))
                         if res is not None:                       # vừa có dự đoán mới
-                            hist.append([round(pkt.t, 2), round(res["probability"], 4)])
+                            hist.append([round(pkt.t, 2), round(res["probability"], 4), res["label"]])
                             del hist[:-300]
                             if res["label"] == 1 and prev_label == 0:
                                 events.append(dict(t=round(pkt.t, 2), p=round(res["probability"], 3)))
                                 del events[:-50]
                             prev_label = res["label"]
                         if clf.last is not None:
+                            fall.update(fall_gated=clf.last.get("gated", False), speed=clf.last.get("speed"),
+                                        gate_text=clf.gate.describe())
                             fall.update(fall_prob=round(clf.last["probability"], 3),
                                         fall_label=clf.last["label"])
                         fall.update(fall_hist=list(hist), fall_events=list(events))
@@ -370,10 +376,14 @@ def create_app(cfg: dict, check_model: bool = True) -> Flask:
         import importlib.util
         from .compare import list_datasets
         cks = list_checkpoints(cfg)
-        pref = [c for c in ("models/best_stgcn.pt", "models/best_lstm.pt") if c in cks]
+        pref = [c for c in ("models/stgcn.pt", "models/lstm.pt") if c in cks]
+        if len(pref) < 2:
+            pref = [c for c in ("models/best_stgcn.pt", "models/best_lstm.pt") if c in cks]
         default = pref if len(pref) >= 2 else cks[:2]
         has_torch = importlib.util.find_spec("torch") is not None
-        return dict(checkpoints=cks, datasets=list_datasets(), default_models=default,
+        from src.motion import SpeedGate
+        g = SpeedGate.from_dict((cfg.get("classifier") or {}).get("speed_gate")).to_dict()
+        return dict(checkpoints=cks, datasets=list_datasets(), default_models=default, gate=g,
                     auto_run=has_torch and len(default) >= 2,
                     error=None if has_torch else "Chưa cài PyTorch (pip install torch) nên chưa chạy được model.")
 
@@ -396,7 +406,7 @@ def create_app(cfg: dict, check_model: bool = True) -> Flask:
             with compare_lock:
                 res = compare_models(cks, data, split=body.get("split", "test"),
                                      device=(cfg.get("classifier") or {}).get("device") or "cpu",
-                                     runs=int(body.get("runs", 100)))
+                                     runs=int(body.get("runs", 100)), speed_gate=body.get("speed_gate"))
                 compare_state["last"] = res
         except ModuleNotFoundError as e:
             return jsonify(error=f"chưa cài {e.name} (pip install torch)"), 400
@@ -424,6 +434,27 @@ def create_app(cfg: dict, check_model: bool = True) -> Flask:
             buf = io.BytesIO(render_report(res, standalone=True).encode("utf-8"))
             return send_file(buf, as_attachment=True, download_name=f"compare_{names}.html", mimetype="text/html")
         abort(404)
+
+    @app.post("/api/classifier/gate")
+    def api_set_gate():
+        """Bật/tắt và chỉnh cổng tốc độ: {"enabled": true, "shoulder_drop": 2.5, "rotation": 200,
+        "keep_if_p_above": 0.95}. Áp dụng cho luồng mở sau đó và cho dự đoán của trình phát."""
+        from src.motion import SpeedGate
+        body = request.get_json(silent=True) or {}
+        try:
+            cur = clf_state["obj"].gate.to_dict() if clf_state["obj"] else SpeedGate().to_dict()
+            cur.update({k: body[k] for k in ("enabled", "shoulder_drop", "rotation", "keep_if_p_above") if k in body})
+            gate = SpeedGate.from_dict(cur)
+            if gate.shoulder_drop < 0 or gate.rotation < 0:
+                raise ValueError("ngưỡng phải >= 0")
+        except (TypeError, ValueError) as e:
+            return jsonify(error=f"tham số không hợp lệ: {e}"), 400
+        cfg["classifier"]["speed_gate"] = gate.to_dict()
+        with clf_lock:
+            if clf_state["obj"] is not None:
+                clf_state["obj"].gate = gate
+        _stop_stream()
+        return jsonify(_clf_info())
 
     @app.post("/api/build-dataset")
     def api_build_dataset():

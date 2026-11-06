@@ -109,6 +109,11 @@ def main(argv=None):
     ap.add_argument("--runs", type=int, default=200, help="số lần đo tốc độ (0 = bỏ qua)")
     ap.add_argument("--csv", default=None, help="ghi bảng kết quả ra CSV")
     ap.add_argument("--html", default=None, help="ghi báo cáo so sánh HTML một file (mở bằng trình duyệt)")
+    ap.add_argument("--gate", action="store_true",
+                    help="với --html: thêm biến thể '+ tốc độ' cho mỗi model (cổng tốc độ, src/motion.py)")
+    ap.add_argument("--gate-shoulder", type=float, default=2.5, help="ngưỡng vai hạ (thân/s)")
+    ap.add_argument("--gate-rotation", type=float, default=200.0, help="ngưỡng xoay thân (độ/s)")
+    ap.add_argument("--gate-keep", type=float, default=0.95, help="P(ngã) đủ cao thì vẫn báo dù chậm (âm = tắt)")
     args = ap.parse_args(argv)
     try:
         import torch  # noqa: F401
@@ -129,7 +134,10 @@ def main(argv=None):
     print_table(rows, args.split, len(y), int(y.sum()))
     if args.html:
         from web.compare import compare_models, render_report
-        res = compare_models(paths, args.data, args.split, device=args.device or "cpu", runs=args.runs)
+        gate = dict(enabled=True, shoulder_drop=args.gate_shoulder, rotation=args.gate_rotation,
+                    keep_if_p_above=None if args.gate_keep < 0 else args.gate_keep) if args.gate else None
+        res = compare_models(paths, args.data, args.split, device=args.device or "cpu", runs=args.runs,
+                             speed_gate=gate)
         out = Path(args.html)
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(render_report(res, standalone=True), encoding="utf-8")

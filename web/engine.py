@@ -78,8 +78,8 @@ def build_drawer(cfg: dict) -> SkeletonDraw:
                         show_score=d.get("show_score", True), show_kp_conf=d.get("show_kp_conf", False))
 
 
-# Thứ tự ưu tiên khi classifier.checkpoint = auto: LSTM (B1) trước, rồi tới ST-GCN của code_1.
-AUTO_CHECKPOINTS = ("models/best_lstm.pt", "models/best_stgcn.pt")
+# Thứ tự ưu tiên khi classifier.checkpoint = auto: model cuối (train.py --final) trước, LSTM trước ST-GCN.
+AUTO_CHECKPOINTS = ("models/lstm.pt", "models/stgcn.pt", "models/best_lstm.pt", "models/best_stgcn.pt")
 
 
 def list_checkpoints(cfg: dict | None = None) -> list[str]:
@@ -114,7 +114,8 @@ def build_classifier(cfg: dict):
     from src.classifier import FallClassifier
     c = cfg.get("classifier") or {}
     return FallClassifier(path, window_size=c.get("window_size"), stride_frames=c.get("stride_frames", 5),
-                          device=c.get("device"), fall_threshold=c.get("threshold"), verbose=False)
+                          device=c.get("device"), fall_threshold=c.get("threshold"), verbose=False,
+                          speed_gate=c.get("speed_gate"))
 
 
 def pose_tag(cfg: dict) -> str:
@@ -289,9 +290,12 @@ def draw_hud(image: np.ndarray, lines: list[str]) -> np.ndarray:
 
 
 def draw_fall(image: np.ndarray, result: dict | None, threshold: float = 0.5) -> np.ndarray:
-    """Nhãn kết quả phân loại ở góc PHẢI trên: đỏ = NGÃ, xanh = không ngã, xám = đang gom khung."""
+    """Nhãn kết quả ở góc PHẢI trên: đỏ = NGÃ, xanh = không ngã, cam = model báo ngã nhưng chuyển động
+    chậm (cổng tốc độ bỏ qua), xám = đang gom khung."""
     if result is None:
         text, color = "FALL? ...", (128, 128, 128)
+    elif result.get("gated"):
+        text, color = f"slow {result['probability']:.2f}", (0, 140, 230)
     elif result["label"] == 1:
         text, color = f"FALL {result['probability']:.2f}", (0, 0, 255)
     else:
@@ -318,7 +322,15 @@ def predict_video(clf, item: dict, batch: int = 256) -> dict:
     for i in range(0, len(clips), batch):
         probs.append(clf.predict_batch(np.stack(clips[i:i + batch])))
     p = np.concatenate(probs) if probs else np.zeros(0)
+    if clips:
+        labels, sp = clf.gate_labels(np.stack(clips), p, fps=item.get("fps"))
+    else:
+        labels, sp = np.zeros(0, int), {k: np.zeros(0) for k in ("shoulder_drop", "rotation")}
     return dict(t=[round(float(t[e]), 3) for e in ends], p=[round(float(v), 4) for v in p],
+                label=[int(v) for v in labels],                       # nhãn cuối (đã qua cổng tốc độ)
+                shoulder_drop=[round(float(v), 2) for v in sp["shoulder_drop"]],
+                rotation=[round(float(v), 1) for v in sp["rotation"]],
+                gate=clf.gate.to_dict(), gate_text=clf.gate.describe(),
                 threshold=clf.fall_threshold, window_size=W, stride_frames=S, model=clf.name)
 
 

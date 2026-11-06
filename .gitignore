@@ -8,3 +8,9 @@ data/videos/**/*
 models/*.pt
 models/*.onnx
 !.vscode/
+
+# dataset VideoDataset.zip (giải nén lại bằng script, không đưa lên git)
+data/videos_new/
+data/videos_new_sensor/
+.venv-gpu/
+backup/

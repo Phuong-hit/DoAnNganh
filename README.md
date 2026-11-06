@@ -212,9 +212,10 @@ Tham số cửa sổ ở mục `check:` của `configs/web.yaml` (mặc định 
 ```bash
 pip install torch && pip install -r requirements.txt
 python -m unittest discover tests                                    # không còn test nào bị bỏ qua
-python train.py --arch lstm                                          # data/dataset.npz -> models/best_lstm.pt
-python evaluate.py models/best_stgcn.pt models/best_lstm.pt --device cpu
-python main.py --source video.mp4 --checkpoint models/best_lstm.pt  # hoặc web: --config configs/code1.yaml
+python train.py --arch lstm  --final                                 # -> models/lstm.pt  (model cuối)
+python train.py --arch stgcn --final                                 # -> models/stgcn.pt (model cuối)
+python evaluate.py models/stgcn.pt models/lstm.pt --data data/dataset_clean_all.npz --html output/compare.html
+python run_web.py --config configs/code1.yaml                        # web tự dùng models/lstm.pt
 ```
 
 | Tệp | Vai trò |
@@ -224,6 +225,7 @@ python main.py --source video.mp4 --checkpoint models/best_lstm.pt  # hoặc web
 | `train.py` | Huấn luyện `--arch lstm` hoặc `--arch stgcn` (cách huấn luyện giữ như train.py của code_1); `--merge-val` gộp val vào train |
 | `evaluate.py` | So sánh checkpoint trên cùng tập test: F1, recall, AUC, theo video, tham số, ms/cửa sổ; `--html` xuất báo cáo một file |
 | `web/compare.py`, `web/templates/compare.html` | Trang **So sánh model** (`/compare`): biểu đồ, ROC, ma trận nhầm lẫn, khoảng tin cậy, từng video |
+| `src/motion.py`, `calibrate_gate.py` | **Cổng tốc độ**: chỉ xác nhận ngã khi vai hạ / thân xoay đủ nhanh (phân biệt ngã với nằm xuống, leo giường); chọn ngưỡng trên val |
 | `check_labels.py` | Tìm cửa sổ "nằm yên" bị gán nhãn ngã (nguyên nhân nằm bình thường bị báo ngã), `--fix` ghi dataset sạch |
 | `data/dataset_clean.npz` | `dataset.npz` đã sửa 75 nhãn nằm yên → 0 ở train/val (test giữ nguyên) |
 | `main.py` | Chạy trên video/webcam bằng đúng pipeline đã tạo dữ liệu (thay main.py của code_1) |

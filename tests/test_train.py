@@ -271,3 +271,51 @@ class MergeValTest(unittest.TestCase):
                 train_mod.train(train_mod.build_parser().parse_args(common + ["--out", str(tmp / "c.pt"), "--merge-val"]))
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
+
+
+class SpeedGateTest(unittest.TestCase):
+    def _clip(self, frames_fall: int, t=20):
+        """Người đứng rồi ngã nghiêng 90 độ trong `frames_fall` khung (ít = nhanh), quanh hông."""
+        from src.features import normalize_clip
+        stand = np.zeros((17, 2), np.float32)
+        stand[[5, 6], 1], stand[[11, 12], 1] = -0.4, 0.0           # vai trên hông
+        stand[[5, 11], 0], stand[[6, 12], 0] = -0.1, 0.1
+        stand[[13, 14], 1], stand[[15, 16], 1] = 0.22, 0.44
+        stand[[7, 9], 0], stand[[8, 10], 0] = -0.15, 0.15
+        stand[[7, 8], 1], stand[[9, 10], 1] = -0.2, 0.0
+        stand[0:5, 1] = -0.55
+        seq = np.zeros((t, 17, 3), np.float32)
+        for k in range(t):
+            a = np.pi / 2 * min(1.0, max(0.0, (k - 5) / frames_fall))
+            rot = np.array([[np.cos(a), -np.sin(a)], [np.sin(a), np.cos(a)]], np.float32)
+            xy = stand @ rot.T
+            seq[k, :, :2] = 0.5 + 0.3 * xy + [0, 0.2 * a / (np.pi / 2)]
+            seq[k, :, 2] = 0.9
+        return normalize_clip(seq, np.ones((t, 17), bool), aspect=1.0)
+
+    def test_fast_vs_slow(self):
+        from src.motion import SpeedGate, motion_features
+        fast, slow = motion_features(self._clip(3), 10), motion_features(self._clip(14), 10)
+        self.assertGreater(fast["rotation"], 2 * slow["rotation"])
+        self.assertGreater(fast["shoulder_drop"], 2 * slow["shoulder_drop"])
+        self.assertGreater(fast["angle_end"], 80)
+        g = SpeedGate(enabled=True, shoulder_drop=(fast["shoulder_drop"] + slow["shoulder_drop"]) / 2,
+                      rotation=1e9, keep_if_p_above=0.95)
+        self.assertTrue(g.passes(fast, 0.8))
+        self.assertFalse(g.passes(slow, 0.8))
+        self.assertTrue(g.passes(slow, 0.97))                      # model rất chắc chắn -> vẫn báo
+        self.assertTrue(SpeedGate(enabled=False).passes(slow, 0.8))
+        batch = motion_features(np.stack([self._clip(3), self._clip(14)]), 10)
+        self.assertEqual(batch["rotation"].shape, (2,))
+
+    def test_search_gate_keeps_falls(self):
+        from src.motion import motion_features, search_gate
+        X = np.stack([self._clip(3), self._clip(3), self._clip(14), self._clip(14)])
+        y = np.array([1, 1, 0, 0])
+        vid = np.array(["S_Fall_1", "S_Fall_2", "S_ADL_1", "S_ADL_2"])
+        p = np.array([0.8, 0.7, 0.75, 0.6])                        # model báo nhầm cả 2 video nằm chậm
+        res = search_gate(y, p, 0.5, motion_features(X, 10), vid)
+        self.assertEqual(res[0]["baseline"]["video_fp"], 2)
+        best = res[1]
+        self.assertEqual(best["video_rec"], 1.0)                    # không mất cú ngã nào
+        self.assertEqual(best["video_fp"], 0)                       # loại được nằm chậm

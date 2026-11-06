@@ -67,8 +67,15 @@ def run(args) -> int:
     clf = build_classifier(cfg)
     if clf is None:
         sys.exit("Chưa có checkpoint: dùng --checkpoint models/best_stgcn.pt (hoặc best_lstm.pt)")
+    if args.gate is not None:
+        clf.gate.enabled = args.gate == "on"
+    if args.gate_shoulder is not None:
+        clf.gate.shoulder_drop = args.gate_shoulder
+    if args.gate_rotation is not None:
+        clf.gate.rotation = args.gate_rotation
     print(f"Bộ phân loại: {clf.name} | {clf.num_params:,} tham số | cửa sổ {clf.window_size} khung, "
           f"dự đoán mỗi {clf.stride_frames} khung | ngưỡng {clf.fall_threshold:.2f} | {clf.device}")
+    print(f"Cổng tốc độ: {clf.gate.describe()}")
 
     estimator = build_estimator(cfg)
     flt = build_filter(cfg)
@@ -88,7 +95,9 @@ def run(args) -> int:
                 pose, lat = estimate(estimator, flt, pkt.frame, pkt.idx, pkt.t)
                 res = clf.update(pose)
                 if res is not None:
-                    log_rows.append((round(pkt.t, 3), round(res["probability"], 4)))
+                    log_rows.append((round(pkt.t, 3), round(res["probability"], 4), res["label"],
+                                     int(res.get("gated", False)), res["speed"].get("shoulder_drop"),
+                                     res["speed"].get("rotation")))
                 n += 1
                 img = drawer.draw(pkt.frame, pose)
                 draw_fall(img, clf.last)
@@ -114,7 +123,10 @@ def run(args) -> int:
             cv2.destroyAllWindows()
 
     print(f"\nĐã xử lý {n} khung, {len(log_rows)} lần dự đoán.")
-    segs = fall_segments(log_rows, clf.fall_threshold)
+    segs = fall_segments([(r[0], float(r[2])) for r in log_rows], 0.5)        # theo nhãn cuối (đã qua cổng)
+    n_gated = sum(r[3] for r in log_rows)
+    if n_gated:
+        print(f"Cổng tốc độ đã bỏ {n_gated} lần model báo ngã vì chuyển động chậm.")
     if segs:
         print("Các đoạn bị báo NGÃ (thời điểm cuối cửa sổ 2 s, giây):")
         for a, b in segs:
@@ -126,7 +138,7 @@ def run(args) -> int:
         out.parent.mkdir(parents=True, exist_ok=True)
         with open(out, "w", newline="", encoding="utf-8") as f:
             w = csv.writer(f)
-            w.writerow(["t", "p_fall"])
+            w.writerow(["t", "p_fall", "label", "gated", "shoulder_drop", "rotation"])
             w.writerows(log_rows)
         print(f"Đã ghi {out}")
     if args.save:
@@ -142,6 +154,10 @@ def main(argv=None):
     ap.add_argument("--checkpoint", default=None, help="mặc định theo classifier.checkpoint trong cấu hình")
     ap.add_argument("--threshold", type=float, default=None, help="mặc định: ngưỡng lưu trong checkpoint")
     ap.add_argument("--no-filter", action="store_true", help="tắt SkeletonFilter")
+    ap.add_argument("--gate", choices=["on", "off"], default=None,
+                    help="bật/tắt cổng tốc độ (mặc định: theo cấu hình / checkpoint)")
+    ap.add_argument("--gate-shoulder", type=float, default=None, help="ngưỡng vai hạ (thân/s)")
+    ap.add_argument("--gate-rotation", type=float, default=None, help="ngưỡng xoay thân (độ/s)")
     ap.add_argument("--save", default=None, help="lưu video kết quả (.mp4)")
     ap.add_argument("--log", default=None, help="lưu P(ngã) theo thời gian (.csv)")
     ap.add_argument("--no-show", action="store_true", help="không mở cửa sổ hình (máy chủ / Colab)")

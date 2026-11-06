@@ -15,7 +15,13 @@ Thêm:
   - chọn ngưỡng P(ngã) tốt nhất trên VAL (lưu vào checkpoint, web tự dùng),
   - lưu lịch sử từng epoch (.history.csv) và báo cáo (.report.json) cạnh checkpoint.
 
-Ví dụ (chạy từ thư mục gốc project):
+CÁCH DÙNG CHÍNH — mỗi model một lệnh, ra đúng một file:
+  python train.py --arch lstm  --final        # -> models/lstm.pt
+  python train.py --arch stgcn --final        # -> models/stgcn.pt
+  (--final = dataset sạch data/dataset_clean.npz, chạy có val để tìm số epoch, rồi train lại trên train+val
+   với số epoch đó, ngưỡng 0.5; file tạm của lần chạy có val tự xóa.)
+
+Ví dụ khác (chạy từ thư mục gốc project):
   python train.py --arch lstm
   python train.py --arch stgcn --out models/stgcn_local.pt
   python train.py --arch lstm --model-kw hidden=256 --model-kw bidirectional=true --epochs 100
@@ -295,6 +301,9 @@ def build_parser():
                     help="giữ ngưỡng 0.5 thay vì chọn trên val")
     ap.add_argument("--device", default=None, help="cpu | cuda | cuda:0 (mặc định tự chọn)")
     ap.add_argument("--fps", type=float, default=None, help="fps của dataset nếu file không lưu (code_1: 10)")
+    ap.add_argument("--final", action="store_true",
+                    help="MỘT LỆNH ra model cuối: dataset sạch, tìm epoch bằng val, train lại trên train+val, "
+                         "ngưỡng 0.5 -> models/<arch>.pt")
     ap.add_argument("--merge-val", action="store_true",
                     help="gộp tập val vào train (không còn val: không early stopping, không chọn ngưỡng)")
     ap.add_argument("--from-report", default=None,
@@ -307,10 +316,42 @@ def build_parser():
     return ap
 
 
+def train_final(args) -> dict:
+    """--final: (1) train có val -> số epoch tốt nhất; (2) train lại trên train+val đúng số epoch đó,
+    ngưỡng cố định (mặc định 0.5). Chỉ giữ checkpoint cuối models/<arch>.pt (+ .report.json, .history.csv)."""
+    import copy
+    out = Path(args.out or f"models/{args.arch}.pt")
+    if not out.is_absolute():
+        out = ROOT / out
+    tmp = out.with_name(f"_tmp_{out.stem}_val.pt")
+    print(f"===== BƯỚC 1/2: train có val để tìm số epoch ({args.arch}) =====")
+    a1 = copy.copy(args)
+    a1.out, a1.merge_val, a1.final = str(tmp), False, False
+    rep1 = train(a1)
+    print(f"\n===== BƯỚC 2/2: train lại trên train + val, {rep1['best_epoch']} epoch =====")
+    a2 = copy.copy(args)
+    a2.out, a2.merge_val, a2.final = str(out), True, False
+    a2.from_report, a2.stop_epoch = None, rep1["best_epoch"]
+    a2.threshold = 0.5 if args.threshold is None else args.threshold
+    rep2 = train(a2)
+    rep2["val_run"] = dict(best_epoch=rep1["best_epoch"], val_05=rep1["val_05"], val_auc=rep1["val_auc"])
+    with open(out.with_suffix(".report.json"), "w", encoding="utf-8") as f:
+        json.dump(rep2, f, ensure_ascii=False, indent=2)
+    for suffix in (".pt", ".report.json", ".history.csv"):            # dọn file tạm của bước 1
+        tmp.with_suffix(suffix).unlink(missing_ok=True)
+    print(f"\nXONG: {out}  (train+val, {rep1['best_epoch']} epoch, ngưỡng {a2.threshold:.2f})")
+    return rep2
+
+
 if __name__ == "__main__":
     _args = build_parser().parse_args()
     try:
         import torch  # noqa: F401
     except ImportError:
         sys.exit("Chưa cài PyTorch: pip install torch  (xem HUONG_DAN_B1.md mục 2)")
-    train(_args)
+    if _args.final:
+        if _args.data == "data/dataset.npz":         # mặc định của --final: dataset đã sửa nhãn
+            _args.data = "data/dataset_clean.npz"
+        train_final(_args)
+    else:
+        train(_args)
