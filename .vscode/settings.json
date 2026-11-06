@@ -1,0 +1,12 @@
+{
+  // Trình thông dịch: môi trường ảo .venv của project (tạo theo HUONG_DAN_B1.md mục 2).
+  // Windows dùng đường dẫn .venv\\Scripts\\python.exe; macOS/Linux đổi thành .venv/bin/python.
+  "python.defaultInterpreterPath": "${workspaceFolder}/.venv/Scripts/python.exe",
+  "python.terminal.activateEnvironment": true,
+  "python.testing.unittestEnabled": true,
+  "python.testing.pytestEnabled": false,
+  "python.testing.unittestArgs": ["-v", "-s", "./tests", "-p", "test_*.py"],
+  "python.analysis.extraPaths": ["${workspaceFolder}"],
+  "files.encoding": "utf8",
+  "files.exclude": { "**/__pycache__": true }
+}

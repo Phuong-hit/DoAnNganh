@@ -34,9 +34,12 @@ class FileSource:
         output_dir="output",
         target_fps: float | None = 10.0,
         max_frames: int | None = None,
+        video_id: str | None = None,
     ):
         self.source = Path(source)
-        self.video_id = self.source.stem
+        # video_id mặc định là tên file; main.py truyền id dài hơn (kèm subject,
+        # loại hành động) để tránh trùng giữa các thư mục.
+        self.video_id = video_id or self.source.stem
         self.max_frames = max_frames
 
         self.cap = cv2.VideoCapture(str(self.source))
@@ -56,8 +59,7 @@ class FileSource:
         else:
             self.out_fps = float(target_fps)
 
-        self.frames_dir = Path(output_dir) / "frames" / self.video_id
-        self.frames_dir.mkdir(parents=True, exist_ok=True)
+        self.frames_dir = Path(output_dir) / "frames" / self.video_id  # tạo khi cần
 
     def get_frames(self):
         """Yield FramePacket theo lưới thời gian đều out_fps."""
@@ -82,6 +84,7 @@ class FileSource:
             src_idx += 1
 
     def save_frame(self, frame, frame_idx):
+        self.frames_dir.mkdir(parents=True, exist_ok=True)
         path = self.frames_dir / f"frame_{frame_idx:06d}.jpg"
         if not cv2.imwrite(str(path), frame):
             raise IOError(f"Không thể lưu frame: {path}")

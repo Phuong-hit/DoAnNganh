@@ -79,3 +79,7 @@ TORSO = SHOULDERS + HIPS
 # Kiểm tra nhất quán ngay khi import: sai là báo lỗi sớm.
 assert NUM_KEYPOINTS == 17
 assert len(set(KEYPOINT_NAMES)) == NUM_KEYPOINTS, "Tên keypoint bị trùng"
+
+# Hoán đổi trái/phải khi lật ngang (augmentation)
+FLIP_INDEX = [0, 2, 1, 4, 3, 6, 5, 8, 7, 10, 9, 12, 11, 14, 13, 16, 15]
+assert sorted(FLIP_INDEX) == list(range(NUM_KEYPOINTS))

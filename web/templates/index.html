@@ -69,14 +69,41 @@
   .job { margin-bottom: 8px; }
   .bar { height: 4px; background: var(--line); border-radius: 2px; overflow: hidden; margin: 3px 0; }
   .bar > i { display: block; height: 100%; background: var(--accent); }
+  /* ---- khung trạng thái phát hiện ngã */
+  .fallpanel { display: grid; grid-template-columns: minmax(0, 1fr) minmax(150px, 220px); gap: 10px 14px;
+               border: 2px solid var(--line); border-radius: 8px; padding: 10px 12px; margin-bottom: 10px;
+               background: var(--bg); align-items: center; }
+  .fallpanel.st-fall { border-color: var(--bad); background: color-mix(in srgb, var(--bad) 12%, var(--bg)); }
+  .fallpanel.st-ok { border-color: var(--ok); }
+  .fall-state { font-size: 26px; font-weight: 800; letter-spacing: .5px; line-height: 1.15; color: var(--muted); }
+  .st-ok .fall-state { color: var(--ok); }
+  .st-fall .fall-state { color: var(--bad); animation: blink 0.8s steps(2, start) infinite; }
+  @keyframes blink { 50% { opacity: .35; } }
+  @media (prefers-reduced-motion: reduce) { .st-fall .fall-state { animation: none; } }
+  .fall-sub { font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+  .fall-pct { font-size: 26px; font-weight: 800; font-variant-numeric: tabular-nums; text-align: right; line-height: 1.15; }
+  .st-fall .fall-pct { color: var(--bad); } .st-ok .fall-pct { color: var(--ok); }
+  .pbar { position: relative; height: 10px; background: var(--line); border-radius: 5px; overflow: hidden; margin: 4px 0 2px; }
+  .pbar > i { position: absolute; left: 0; top: 0; bottom: 0; width: 0; background: var(--ok); transition: width .25s; }
+  .st-fall .pbar > i { background: var(--bad); }
+  .pbar > .thr { position: absolute; top: -2px; bottom: -2px; width: 2px; background: var(--text); opacity: .7; }
+  .fall-prob small { color: var(--muted); font-size: 11px; display: block; text-align: right; }
+  .fallpanel canvas { grid-column: 1 / -1; width: 100%; height: 70px; display: block; }
+  .events { grid-column: 1 / -1; font-size: 12px; color: var(--muted); }
+  .events b { color: var(--bad); }
+  @media (max-width: 520px) { .fallpanel { grid-template-columns: 1fr; } .fall-pct, .fall-prob small { text-align: left; } }
+  select { padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--text);
+           max-width: 100%; }
 </style>
 </head>
 <body>
 <header>
   <h1>Fall Web</h1>
+  <a href="/compare" style="font-size:13px;font-weight:600">So sánh model →</a>
   <span>Pose: <b>{{ pose_tag }}</b> ({{ backend }}) · conf {{ conf }}</span>
   <span>Lấy mẫu: {{ target_fps or "native" }} fps · SkeletonFilter khi trích: <b>{{ "bật" if filter_on else "tắt" }}</b></span>
   <span>CSV lưu tại <code>{{ out_dir }}</code></span>
+  <span>Phát hiện ngã: <b id="hdrClf">{% if clf_name %}{{ clf_name }}{% else %}tắt{% endif %}</b></span>
 </header>
 <div class="statusbar">
   <span><span class="dot" id="dot"></span><span id="st-status">đang tải...</span></span>
@@ -84,6 +111,7 @@
   <span>Khung hình đã xử lý: <b id="st-frames">-</b></span>
   <span>Video: <b id="st-videos">-</b> · có skeleton: <b id="st-sk">-</b></span>
   <span>Thời gian chạy: <b id="st-uptime">-</b></span>
+  <span>Ngã: <b id="st-fall">-</b></span>
 </div>
 <main>
   <section>
@@ -98,8 +126,23 @@
       <label class="switch"><input type="checkbox" id="showSkel" checked onchange="toggleSkeleton()"> Hiện skeleton</label>
       <label class="switch" title="Chỉ áp dụng khi xem trực tiếp. CSV trích ra theo cấu hình filter.enabled">
         <input type="checkbox" id="useFilter" {{ "checked" if filter_on else "" }} onchange="toggleFilter()"> Làm mượt (SkeletonFilter)</label>
-      <button id="btnFrames" class="small" onclick="downloadFrames()" disabled
-              title="Tạo một file ZIP chứa mọi khung của video, mỗi khung đã vẽ skeleton">Tải toàn bộ khung (ZIP)</button>
+      <label class="switch" title="Bỏ chọn để xem khi không chạy model phân loại">
+        <input type="checkbox" id="useClf" {{ "checked" if clf_name else "disabled" }} onchange="toggleFilter()"> Phát hiện ngã</label>
+      <label class="switch">Model
+        <select id="clfSel" onchange="setClassifier(this.value)" title="Checkpoint trong thư mục models/"></select></label>
+    </div>
+    <div class="fallpanel" id="fallpanel">
+      <div>
+        <div class="fall-state" id="fallState">—</div>
+        <div class="fall-sub" id="fallSub"></div>
+      </div>
+      <div class="fall-prob">
+        <div class="fall-pct" id="fallPct">--</div>
+        <div class="pbar"><i id="fallBar"></i><span class="thr" id="fallThr"></span></div>
+        <small>tỉ lệ ngã P(ngã) · ngưỡng <span id="fallThrTxt">-</span></small>
+      </div>
+      <canvas id="fallChart" aria-label="Biểu đồ P(ngã) theo thời gian"></canvas>
+      <div class="events" id="fallEvents"></div>
     </div>
     <div class="viewer" id="viewer"><div class="ph">Chọn một video ở bảng bên phải hoặc nhập nguồn rồi bấm Xem.</div></div>
     <div class="note" id="vnote"></div>
@@ -114,6 +157,7 @@
       <button onclick="extract('all')">Trích tất cả</button>
       <label class="muted"><input type="checkbox" id="overwrite"> chạy lại cả video đã có</label>
       <button onclick="loadVideos()">Làm mới</button>
+      <button onclick="buildDataset()" title="NPZ đã trích + nhãn metadata -> windows.npz cho huấn luyện">Tạo dataset</button>
     </div>
     <div class="report" id="scanReport"></div>
     <div class="scroll">
@@ -130,6 +174,8 @@
 const $ = (id) => document.getElementById(id);
 const EDGES = {{ edges|tojson }};
 const CONF = {{ draw_conf|tojson }};
+let CLF = {{ clf_info|tojson }};          // bộ phân loại đang nạp (tên, ngưỡng, lỗi, danh sách checkpoint)
+const hasClf = () => !!CLF.name;
 let liveTimer = null;
 let videoIds = new Set();      // video có trong metadata -> phát bằng trình phát của trình duyệt
 let player = null;             // {id, video, canvas, ctx, skel, raf, lastIdx}
@@ -147,10 +193,104 @@ function toggleSkeleton() {
 }
 function toggleFilter() {
   if (player) {
-    $("vnote").textContent = "Trình phát vẽ đúng CSV đã trích; bật/tắt làm mượt chỉ áp dụng khi xem trực tiếp.";
+    player.lastIdx = -1;
+    $("vnote").textContent = "Trình phát vẽ đúng CSV/NPZ đã trích; bật/tắt làm mượt chỉ áp dụng khi xem trực tiếp.";
     return;
   }
   const s = liveSource(); if (s) startLive(s);
+}
+
+// ---------------------------------------------------------------- khung trạng thái phát hiện ngã
+let lastFall = null;             // chữ ngắn cho dải trạng thái khi đang ở trình phát
+function renderFall(o) {
+  const panel = $("fallpanel");
+  const thr = o.thr ?? CLF.threshold ?? 0.5;
+  const pct = o.p == null ? null : Math.round(o.p * 100);
+  let title, cls = "";
+  if (o.state === "off") {
+    title = "CHƯA BẬT PHÁT HIỆN NGÃ";
+    o.sub = o.sub || (CLF.error ? `Lý do: ${CLF.error}` : "Bật ô \"Phát hiện ngã\" hoặc chọn model.");
+  } else if (o.state === "idle") title = "CHƯA CÓ NGUỒN";
+  else if (o.state === "collect") title = o.win ? `ĐANG GOM KHUNG ${o.collected ?? 0}/${o.win}` : "ĐANG GOM KHUNG";
+  else if (o.state === "fall") { title = "NGÃ!"; cls = "st-fall"; }
+  else { title = "KHÔNG NGÃ"; cls = "st-ok"; }
+  if (o.finished && o.state !== "off") title += " (đã hết video)";
+  panel.className = "fallpanel " + cls;
+  $("fallState").textContent = title;
+  $("fallSub").textContent = o.sub || "";
+  $("fallPct").textContent = pct == null ? "--" : pct + "%";
+  $("fallBar").style.width = (pct ?? 0) + "%";
+  $("fallThr").style.left = `calc(${thr * 100}% - 1px)`;
+  $("fallThrTxt").textContent = Math.round(thr * 100) + "%";
+  lastFall = o.state === "fall" ? `NGÃ (${pct}%)` : (o.state === "ok" ? `không ngã (${pct}%)` : null);
+  drawChart(o.hist || [], thr, o.cursor, o.span);
+  const ev = o.events || [];
+  $("fallEvents").innerHTML = o.state === "off" ? "" : (ev.length
+    ? `Phát hiện ngã ${ev.length} lần: ` + ev.slice(-8).map(e => `<b>t = ${e.t.toFixed(1)} s</b> (${Math.round(e.p * 100)}%)`).join(" · ")
+    : "Chưa phát hiện lần ngã nào.");
+}
+
+// Biểu đồ P(ngã) theo thời gian: đường xanh, phần vượt ngưỡng tô đỏ, nét đứt = ngưỡng, vạch dọc = thời điểm hiện tại.
+function drawChart(hist, thr, cursor, span) {
+  const cv = $("fallChart"), dpr = window.devicePixelRatio || 1;
+  const w = cv.clientWidth, h = cv.clientHeight;
+  if (!w) return;
+  if (cv.width !== Math.round(w * dpr)) { cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr); }
+  const ctx = cv.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+  const css = getComputedStyle(document.documentElement);
+  const cOk = css.getPropertyValue("--ok").trim(), cBad = css.getPropertyValue("--bad").trim();
+  const cMuted = css.getPropertyValue("--muted").trim(), cLine = css.getPropertyValue("--line").trim();
+  const pad = 2, H = h - 14;
+  ctx.strokeStyle = cLine; ctx.lineWidth = 1; ctx.strokeRect(0.5, 0.5, w - 1, H);
+  if (!hist.length) {
+    ctx.fillStyle = cMuted; ctx.font = "11px system-ui, sans-serif";
+    ctx.fillText("P(ngã) theo thời gian sẽ hiện ở đây", 8, H / 2 + 4);
+    return;
+  }
+  const t0 = span ? 0 : hist[0][0], t1 = span || Math.max(hist[hist.length - 1][0], t0 + 1);
+  const X = t => pad + (t - t0) / (t1 - t0) * (w - 2 * pad), Y = p => H - pad - p * (H - 2 * pad);
+  ctx.fillStyle = cBad; ctx.globalAlpha = 0.25;           // vùng vượt ngưỡng
+  for (let k = 0; k < hist.length; k++) {
+    if (hist[k][1] < thr) continue;
+    const xa = X(hist[k][0]), xb = k + 1 < hist.length ? X(hist[k + 1][0]) : xa + 3;
+    ctx.fillRect(xa, pad, Math.max(2, xb - xa), H - 2 * pad);
+  }
+  ctx.globalAlpha = 1;
+  ctx.setLineDash([4, 3]); ctx.strokeStyle = cMuted;      // ngưỡng
+  ctx.beginPath(); ctx.moveTo(0, Y(thr)); ctx.lineTo(w, Y(thr)); ctx.stroke(); ctx.setLineDash([]);
+  ctx.strokeStyle = cOk; ctx.lineWidth = 2; ctx.beginPath();
+  hist.forEach(([t, p], k) => k ? ctx.lineTo(X(t), Y(p)) : ctx.moveTo(X(t), Y(p)));
+  ctx.stroke();
+  hist.forEach(([t, p]) => { if (p >= thr) { ctx.fillStyle = cBad; ctx.fillRect(X(t) - 2, Y(p) - 2, 4, 4); } });
+  if (cursor != null) { ctx.fillStyle = css.getPropertyValue("--text").trim(); ctx.fillRect(X(cursor) - 1, pad, 2, H - 2 * pad); }
+  ctx.fillStyle = cMuted; ctx.font = "11px system-ui, sans-serif";
+  ctx.fillText(`${t0.toFixed(0)} s`, 2, h - 2);
+  const end = `${t1.toFixed(0)} s`; ctx.fillText(end, w - ctx.measureText(end).width - 2, h - 2);
+  const lbl = "P(ngã) 0–100%"; ctx.fillText(lbl, (w - ctx.measureText(lbl).width) / 2, h - 2);
+}
+
+function fillModelSelect() {
+  const sel = $("clfSel");
+  const cur = CLF.path || "";
+  const opts = [["auto", "tự chọn (LSTM nếu có)"], ...CLF.available.map(a => [a, a.replace(/^models\//, "")]), ["", "tắt"]];
+  sel.innerHTML = opts.map(([v, t]) => `<option value="${esc(v)}">${esc(t)}</option>`).join("");
+  sel.value = CLF.available.includes(cur) ? cur : (CLF.name ? "auto" : "");
+  $("hdrClf").textContent = CLF.name ? `${CLF.name} (${(CLF.params || 0).toLocaleString()} tham số)` : "tắt";
+  $("useClf").disabled = !CLF.name;
+  if (CLF.name && !$("useClf").dataset.touched) $("useClf").checked = true;
+}
+
+async function setClassifier(value) {
+  renderFall({state: "idle", sub: "đang nạp model " + (value || "(tắt)") + "..."});
+  const res = await fetch("/api/classifier", {method: "POST", headers: {"Content-Type": "application/json"},
+                                               body: JSON.stringify({checkpoint: value || null})});
+  CLF = await res.json();
+  fillModelSelect();
+  if (!res.ok || !CLF.name) { renderFall({state: "off"}); }
+  if (player) loadPrediction(player.id);              // vẽ lại P(ngã) cho video đang mở bằng model mới
+  else { const s = liveSource(); if (s) startLive(s); else if (CLF.name) renderFall({state: "idle", sub: `Đã nạp ${CLF.name}. Chọn video hoặc webcam rồi bấm Xem.`}); }
 }
 
 function fmtTime(sec) {
@@ -170,6 +310,9 @@ async function pollStatus() {
     $("st-videos").textContent = d.videos;
     $("st-sk").textContent = d.skeletons;
     $("st-uptime").textContent = fmtTime(d.uptime_s);
+    $("st-fall").textContent = d.fall_label == null ? (player && lastFall ? lastFall : "-")
+      : (d.fall_label ? `NGÃ (${Math.round(d.fall_prob * 100)}%)` : `không ngã (${Math.round(d.fall_prob * 100)}%)`);
+    $("st-fall").className = d.fall_label ? "bad" : (d.fall_label === 0 ? "good" : "");
   } catch (e) { $("st-status").textContent = "mất kết nối tới server"; $("dot").className = "dot"; }
 }
 
@@ -199,7 +342,8 @@ function startLive(src) {
   $("stats").innerHTML = "";
   const img = new Image();
   img.src = "/stream?source=" + encodeURIComponent(s) + "&skeleton=" + (skelOn() ? 1 : 0)
-          + "&filter=" + ($("useFilter").checked ? 1 : 0) + "&_=" + Date.now();
+          + "&filter=" + ($("useFilter").checked ? 1 : 0)
+          + "&classify=" + ($("useClf").checked ? 1 : 0) + "&_=" + Date.now();
   img.alt = "live";
   $("viewer").appendChild(img);
   clearInterval(liveTimer);
@@ -215,7 +359,6 @@ async function stopLive() {
 }
 
 function stopPlayer() {
-  $("btnFrames").disabled = true;
   if (!player) return;
   cancelAnimationFrame(player.raf);
   player.video.pause();
@@ -249,6 +392,61 @@ function drawPose(ctx, w, h, kp, valid) {
   }
 }
 
+// Nhãn kết quả ở góc phải trên + dải P(ngã) theo thời gian ở mép dưới (giống draw_fall của web/engine.py).
+function drawFall(ctx, w, h, p, thr) {
+  const pr = player.pred, dur = player.video.duration || (pr.t.length ? pr.t[pr.t.length - 1] : 0);
+  if (dur > 0) {
+    const bh = Math.max(6, h / 40);
+    ctx.fillStyle = "rgba(0,0,0,.45)"; ctx.fillRect(0, h - bh, w, bh);
+    for (let k = 0; k < pr.t.length; k++) {
+      const x0 = pr.t[k] / dur * w, x1 = (k + 1 < pr.t.length ? pr.t[k + 1] : dur) / dur * w;
+      ctx.fillStyle = pr.p[k] >= thr ? "#ff2d2d" : `rgba(0,200,90,${0.25 + 0.75 * pr.p[k]})`;
+      ctx.fillRect(x0, h - bh * Math.max(0.2, pr.p[k]), Math.max(1, x1 - x0), bh * Math.max(0.2, pr.p[k]));
+    }
+    ctx.fillStyle = "#fff"; ctx.fillRect(player.video.currentTime / dur * w - 1, h - bh, 2, bh);
+  }
+  const text = p == null ? "FALL? ..." : (p >= thr ? `FALL ${p.toFixed(2)}` : `no fall ${p.toFixed(2)}`);
+  ctx.font = `bold ${Math.max(14, w / 30)}px system-ui, sans-serif`;
+  const tw = ctx.measureText(text).width, th = Math.max(14, w / 30);
+  ctx.fillStyle = p == null ? "#808080" : (p >= thr ? "#d32f2f" : "#2e7d32");
+  ctx.fillRect(w - tw - 20, 8, tw + 12, th + 12);
+  ctx.fillStyle = "#fff"; ctx.fillText(text, w - tw - 14, 8 + th + 2);
+}
+
+async function loadPrediction(id) {
+  if (!hasClf()) { renderFall({state: "off"}); return; }
+  const res = await fetch("/api/predict/" + id);
+  if (!player || player.id !== id) return;
+  player.pred = res.ok ? await res.json() : null;
+  player.events = [];
+  if (player.pred) {                      // các lần chuyển sang NGÃ trong cả video
+    let prev = false;
+    player.pred.t.forEach((t, k) => {
+      const f = player.pred.p[k] >= player.pred.threshold;
+      if (f && !prev) player.events.push({t, p: player.pred.p[k]});
+      prev = f;
+    });
+  }
+  player.lastIdx = -1;
+  if (!res.ok) {
+    const err = (await res.json()).error || res.status;
+    $("vnote").textContent += " Chưa có dự đoán ngã: " + err;
+    renderFall({state: "off", sub: "Video này chưa có NPZ: bấm \"trích lại\" ở bảng bên phải."});
+  }
+}
+
+async function buildDataset() {
+  const box = $("scanReport");
+  box.className = "report show";
+  box.textContent = "Đang tạo dataset cửa sổ ...";
+  const d = await (await fetch("/api/build-dataset", {method: "POST"})).json();
+  if (d.error) { box.innerHTML = `<span class="bad">${esc(d.error)}</span>`; return; }
+  const sp = Object.entries(d.by_split).map(([k, v]) => `${k}: ${v.windows} (ngã ${v.fall})`).join(" · ");
+  box.innerHTML = `Đã ghi <code>${esc(d.path)}</code>: <b>${d.windows}</b> cửa sổ ${d.window_size} khung @ ${d.fps} fps ` +
+    `(ngã ${d.fall}, không ngã ${d.no_fall}) từ ${d.videos} video.<div class="muted">${esc(sp)}</div>` +
+    (d.notes.length ? "<ul>" + d.notes.map(n => `<li class="warn">${esc(n)}</li>`).join("") + "</ul>" : "");
+}
+
 async function showVideo(id) {
   clearInterval(liveTimer);
   await fetch("/api/stop", {method: "POST"});   // dừng luồng MJPEG nếu đang chạy
@@ -257,7 +455,7 @@ async function showVideo(id) {
   viewer.className = "viewer is-player";
   viewer.innerHTML = `<div class="player"><video id="vid" controls preload="auto" src="/video/${id}"></video><canvas id="ov"></canvas></div>`;
   const video = $("vid"), canvas = $("ov");
-  player = {id, video, canvas, ctx: canvas.getContext("2d"), skel: null, raf: 0, lastIdx: -1};
+  player = {id, video, canvas, ctx: canvas.getContext("2d"), skel: null, pred: null, raf: 0, lastIdx: -1};
   video.addEventListener("error", () => {
     $("vnote").textContent = "Trình duyệt không phát được file này (thường do codec, ví dụ AVI/XVID). Video vẫn trích skeleton được; có thể xem bằng ô nguồn + Xem (luồng MJPEG).";
   });
@@ -272,8 +470,20 @@ async function showVideo(id) {
       if (i !== player.lastIdx) {
         drawPose(player.ctx, w, h, s.joints[i], skelOn() && s.valid[i]);
         player.lastIdx = i;
-        $("stats").innerHTML = statHtml([["t (s)", s.t[i].toFixed(2)], ["Có người", s.valid[i] ? "có" : "không"],
-                                         ["Khung skeleton", `${i + 1} / ${s.t.length}`]]);
+        const items = [["t (s)", s.t[i].toFixed(2)], ["Có người", s.valid[i] ? "có" : "không"],
+                       ["Khung skeleton", `${i + 1} / ${s.t.length}`]];
+        const pr = player.pred;
+        if (pr && $("useClf").checked) {
+          const p = pr.t.length && s.t[i] >= pr.t[0] ? pr.p[frameIndex(pr.t, s.t[i])] : null;
+          drawFall(player.ctx, w, h, p, pr.threshold);
+          renderFall({state: p == null ? "collect" : (p >= pr.threshold ? "fall" : "ok"), p, thr: pr.threshold,
+                      sub: `${pr.model} · video ${player.id} · t = ${s.t[i].toFixed(1)} s` + (s.valid[i] ? "" : " · không thấy người"),
+                      hist: pr.t.map((t, k) => [t, pr.p[k]]), cursor: s.t[i],
+                      span: player.video.duration || null, events: player.events});
+          items.push(["P(ngã)", p == null ? "đang gom khung" : p.toFixed(2)],
+                     ["Kết quả", p == null ? "-" : (p >= pr.threshold ? "NGÃ" : "không ngã")]);
+        }
+        $("stats").innerHTML = statHtml(items);
       }
     }
     player.raf = requestAnimationFrame(loop);
@@ -292,45 +502,27 @@ async function loadSkeleton(id) {
   }
   player.skel = await res.json();
   player.lastIdx = -1;
-  $("btnFrames").disabled = false;
   $("vnote").textContent = "Khung xương vẽ theo CSV đã trích. Tua hoặc tạm dừng bằng thanh điều khiển của video.";
-}
-
-async function downloadFrames() {
-  if (!player || !player.skel) return;
-  const id = player.id, btn = $("btnFrames");
-  btn.disabled = true;
-  $("vnote").textContent = "Đang tạo file ZIP chứa toàn bộ khung (đã vẽ skeleton). Video dài có thể mất vài chục giây...";
-  try {
-    const res = await fetch(`/frames/${id}.zip`);
-    if (!res.ok) {
-      const d = await res.json().catch(() => ({}));
-      $("vnote").textContent = "Lỗi: " + (d.error || res.statusText);
-      return;
-    }
-    const url = URL.createObjectURL(await res.blob());
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `${id}_frames.zip`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 60000);
-    $("vnote").textContent = `Đã tải ${id}_frames.zip.`;
-  } catch (e) {
-    $("vnote").textContent = "Lỗi khi tạo ZIP: " + e;
-  } finally {
-    btn.disabled = !(player && player.skel);
-  }
+  await loadPrediction(id);
 }
 
 async function pollLive() {
   const d = await (await fetch("/api/live")).json();
-  if (d.error) { $("stats").innerHTML = statHtml([["Lỗi", d.error]]); clearInterval(liveTimer); return; }
-  if (!d.frames) { $("stats").innerHTML = statHtml([["Trạng thái", "đang mở nguồn / nạp model..."]]); return; }
+  if (d.error) { $("stats").innerHTML = statHtml([["Lỗi", d.error]]); clearInterval(liveTimer);
+                 renderFall({state: "idle", sub: d.error}); return; }
+  if (!d.frames) { $("stats").innerHTML = statHtml([["Trạng thái", "đang mở nguồn / nạp model..."]]);
+                   renderFall({state: "idle", sub: "đang mở nguồn / nạp model..."}); return; }
+  if (!d.classifier) renderFall({state: "off", sub: d.classifier_off});
+  else renderFall({state: d.fall_label == null ? "collect" : (d.fall_label ? "fall" : "ok"), p: d.fall_prob,
+                   thr: d.threshold, collected: d.collected, win: d.window_size, hist: d.fall_hist, cursor: d.t,
+                   events: d.fall_events, finished: d.finished,
+                   sub: `${d.classifier} · ${d.source} · t = ${d.t} s` + (d.valid ? "" : " · không thấy người")});
   $("stats").innerHTML = statHtml([["t (s)", d.t], ["Có người", d.valid ? "có" : "không"], ["Pose (ms)", d.latency_ms],
     ["Pose p95", d.pose_ms_p95], ["FPS đầu-cuối", d.e2e_fps], ["Khung", d.frames],
-    ["Tỉ lệ có người", d.valid_ratio], ["Làm mượt", d.filter ? "bật" : "tắt"]]);
+    ["Tỉ lệ có người", d.valid_ratio], ["Làm mượt", d.filter ? "bật" : "tắt"],
+    ...(d.classifier ? [["P(ngã)", d.fall_prob ?? "đang gom khung"],
+                        ["Kết quả", d.fall_label == null ? "-" : (d.fall_label ? "NGÃ" : "không ngã")],
+                        ["Phân loại (ms)", d.fall_ms]] : [])]);
   if (d.finished) clearInterval(liveTimer);
 }
 
@@ -410,6 +602,11 @@ async function pollJobs() {
 }
 
 $("source").addEventListener("keydown", (e) => { if (e.key === "Enter") startLive(); });
+$("useClf").addEventListener("change", () => { $("useClf").dataset.touched = "1"; });
+fillModelSelect();
+renderFall(CLF.name ? {state: "idle", sub: `Model ${CLF.name}, ngưỡng ${Math.round(CLF.threshold * 100)}%. Chọn video hoặc webcam rồi bấm Xem.`}
+                    : {state: "off"});
+window.addEventListener("resize", () => { if (player) player.lastIdx = -1; });
 loadVideos();
 pollJobs();
 pollStatus();

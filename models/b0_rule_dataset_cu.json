@@ -1,0 +1,19 @@
+{
+  "name": "b0_rule",
+  "saved_at": "2026-10-31T12:01:59",
+  "params": {
+    "angle_th": 55.0,
+    "shoulder_low_th": 0.2,
+    "v_fall_th": 0.22,
+    "angle_change_th": 30.0,
+    "occ_drop_th": 0.35,
+    "end_frames": 4
+  },
+  "metrics": {
+    "train_score": 0.7606222407137738,
+    "train_video_f1": 0.8080808080808081,
+    "train_window_f1": 0.6498855835240274,
+    "train_video_precision": 0.6779661016949152,
+    "train_video_recall": 1.0
+  }
+}

@@ -1,0 +1,563 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>So sánh model{% if data %} – {{ data.models|map(attribute='name')|join(' vs ') }}{% endif %}</title>
+<style>
+  :root {
+    color-scheme: light;
+    --bg: #f6f7f9; --panel: #ffffff; --text: #1d2330; --muted: #657085; --line: #dde2ea; --grid: #eceff3;
+    --accent: #1f6feb; --accent-text: #ffffff; --ok: #1a7f37; --warn: #b35900; --bad: #c62828;
+    /* màu nhận diện model (bảng màu đã kiểm tra mù màu, thứ tự cố định) */
+    --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100;
+    --cm: 42, 120, 214;   /* ramp xanh dương cho ma trận nhầm lẫn */
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) {
+      color-scheme: dark;
+      --bg: #12151b; --panel: #1b2029; --text: #e6e9ef; --muted: #98a2b3; --line: #2c3340; --grid: #252b36;
+      --accent: #4c8dff; --accent-text: #0d1117; --ok: #4ac26b; --warn: #e3a248; --bad: #ff6b6b;
+      --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --cm: 57, 135, 229;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --bg: #12151b; --panel: #1b2029; --text: #e6e9ef; --muted: #98a2b3; --line: #2c3340; --grid: #252b36;
+    --accent: #4c8dff; --accent-text: #0d1117; --ok: #4ac26b; --warn: #e3a248; --bad: #ff6b6b;
+    --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --cm: 57, 135, 229;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 14px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  header { padding: 14px 20px; border-bottom: 1px solid var(--line); background: var(--panel);
+           display: flex; flex-wrap: wrap; gap: 6px 20px; align-items: baseline; }
+  header h1 { font-size: 17px; margin: 0; }
+  header .muted { font-size: 13px; }
+  main { padding: 16px 20px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; max-width: 1400px; margin: 0 auto; }
+  @media (max-width: 700px) { main { padding: 12px 16px; } header { padding: 12px 16px; } }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px; min-width: 0; }
+  h2 { font-size: 15px; margin: 0 0 4px; }
+  .lead { color: var(--muted); font-size: 12.5px; margin: 0 0 10px; }
+  .row { display: flex; gap: 8px 16px; flex-wrap: wrap; align-items: center; }
+  label { display: inline-flex; gap: 6px; align-items: center; }
+  select, button { padding: 7px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg);
+                   color: var(--text); font: inherit; max-width: 100%; }
+  button { cursor: pointer; }
+  button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+  button:disabled { opacity: .6; cursor: progress; }
+  a { color: var(--accent); }
+  .muted { color: var(--muted); }
+  code { font-size: 12px; overflow-wrap: anywhere; }
+  .grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+  @media (max-width: 900px) { .grid2 { grid-template-columns: 1fr; } }
+  .verdict { border-left: 4px solid var(--accent); }
+  .verdict ul { margin: 6px 0 0; padding-left: 20px; }
+  .verdict li { margin: 3px 0; }
+  .warnbox { color: var(--warn); font-size: 13px; }
+  .scroll { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { padding: 6px 8px; border-bottom: 1px solid var(--line); text-align: right; white-space: nowrap; }
+  th:first-child, td:first-child { text-align: left; white-space: normal; }
+  th { color: var(--muted); font-weight: 600; }
+  td.num { font-variant-numeric: tabular-nums; }
+  td.best { font-weight: 700; }
+  td.best::after { content: " ★"; color: var(--muted); font-size: 11px; }
+  .sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }
+  .legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12.5px; margin: 2px 0 6px; }
+  .chart { position: relative; width: 100%; }
+  .chart svg { display: block; width: 100%; height: auto; overflow: visible; }
+  .chart { min-height: 40px; }
+  .chart text { fill: var(--muted); font-size: 11px; font-family: inherit; }
+  .chart .axis { stroke: var(--line); }
+  .chart .gridline { stroke: var(--grid); }
+  .tip { position: fixed; pointer-events: none; z-index: 10; background: var(--panel); color: var(--text);
+         border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; font-size: 12px;
+         box-shadow: 0 4px 14px rgba(0,0,0,.15); display: none; max-width: 280px; }
+  .tip b { font-variant-numeric: tabular-nums; }
+  .cms { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 14px; }
+  .cm { overflow-x: auto; }
+  .cm table { width: auto; }
+  .cm td, .cm th { text-align: center; padding: 8px 10px; border: 1px solid var(--line); }
+  .cm td { min-width: 78px; font-variant-numeric: tabular-nums; }
+  .cm td small { display: block; color: var(--muted); font-size: 11px; }
+  .badge { display: inline-flex; align-items: center; gap: 3px; font-size: 12px; padding: 0 6px; border-radius: 4px;
+           border: 1px solid var(--line); }
+  .badge.TP, .badge.TN { color: var(--ok); }
+  .badge.FN { color: var(--bad); border-color: var(--bad); }
+  .badge.FP { color: var(--warn); border-color: var(--warn); }
+  tr.clickable { cursor: pointer; }
+  tr.clickable:hover td { background: var(--bg); }
+  tr.sel td { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+  .seg { display: inline-flex; flex-wrap: wrap; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+  .seg button { border: 0; border-radius: 0; padding: 5px 10px; }
+  .seg button.on { background: var(--accent); color: var(--accent-text); }
+  .hidden { display: none !important; }
+  .status { font-size: 13px; }
+  .placeholder { color: var(--muted); padding: 30px 10px; text-align: center; }
+  details summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+  @media print { .noprint { display: none !important; } section { break-inside: avoid; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>So sánh model phát hiện ngã</h1>
+  <span class="muted" id="hdrInfo">ST-GCN, LSTM… trên cùng một tập dữ liệu</span>
+  {% if not standalone %}<a href="/" class="noprint">← Trang chính</a>{% endif %}
+</header>
+<main>
+  {% if not standalone %}
+  <section class="noprint">
+    <h2>Chọn model và dữ liệu</h2>
+    <p class="lead">Mọi model được chạy trên đúng cùng các cửa sổ của tập đã chọn. Chọn model bằng tập <b>val</b>,
+      chỉ báo cáo tập <b>test</b> cho model cuối cùng.</p>
+    <div class="row" id="modelBoxes"></div>
+    <div class="row" style="margin-top:10px">
+      <label>Dataset <select id="dataSel"></select></label>
+      <label>Tập <select id="splitSel"><option value="test">test</option><option value="val">val</option>
+        <option value="train">train</option></select></label>
+      <button class="primary" id="runBtn" onclick="runCompare()">So sánh</button>
+      <span class="status muted" id="runStatus"></span>
+    </div>
+  </section>
+  {% endif %}
+  <div id="result"><section><div class="placeholder">{% if standalone %}Không có dữ liệu.{% else %}Chọn ít nhất hai model rồi bấm <b>So sánh</b>.{% endif %}</div></section></div>
+</main>
+<div class="tip" id="tip"></div>
+<script>
+const STANDALONE = {{ standalone|tojson }};
+const OPTIONS = {{ options|tojson }};
+let DATA = {{ data|tojson }};
+let MODE = "thr";            // "thr" = ngưỡng của checkpoint (chọn trên val), "05" = ngưỡng 0.5
+let VFILTER = "all";
+let SELVIDEO = null;
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
+const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+const colorOf = (i) => css(`--s${(i % 4) + 1}`);     // màu đã tính (SVG cần giá trị thật, không dùng var())
+const f3 = (v) => v == null ? "–" : Number(v).toFixed(3);
+const pct = (v) => v == null ? "–" : (100 * v).toFixed(1) + "%";
+const fmtInt = (v) => v == null ? "–" : Number(v).toLocaleString("vi-VN");
+const SVGNS = "http://www.w3.org/2000/svg";
+
+// ------------------------------------------------------------------ tooltip
+const tip = $("tip");
+function showTip(html, ev) {
+  tip.innerHTML = html; tip.style.display = "block";
+  const r = tip.getBoundingClientRect();
+  let x = ev.clientX + 14, y = ev.clientY + 14;
+  if (x + r.width > innerWidth - 8) x = ev.clientX - r.width - 14;
+  if (y + r.height > innerHeight - 8) y = ev.clientY - r.height - 14;
+  tip.style.left = Math.max(8, x) + "px"; tip.style.top = Math.max(8, y) + "px";
+}
+const hideTip = () => { tip.style.display = "none"; };
+
+// ------------------------------------------------------------------ SVG helpers
+function el(tag, attrs = {}, parent) {
+  const e = document.createElementNS(SVGNS, tag);
+  for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
+  if (parent) parent.appendChild(e);
+  return e;
+}
+function legendHtml(models) {
+  return `<div class="legend">${models.map((m, i) =>
+    `<span><span class="sw" style="background:${colorOf(i)}"></span>${esc(m.name)} <span class="muted">(${esc(m.arch)})</span></span>`).join("")}</div>`;
+}
+
+// Biểu đồ đường: series [{name, color, pts:[[x,y]], dash?, marker?}], hover = crosshair dọc + tooltip.
+function lineChart(box, o) {
+  // vẽ theo đúng chiều rộng thật của khung -> chữ luôn 11px, không bị phóng to/thu nhỏ
+  const W = Math.max(280, Math.round(box.clientWidth || 560)), H = o.height || Math.round(Math.min(320, Math.max(220, W * 0.55)));
+  const m = {l: 44, r: 14, t: 10, b: 38};
+  box.innerHTML = "";
+  const svg = el("svg", {viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": o.title || ""}, box);
+  const [x0, x1] = o.x, [y0, y1] = o.y;
+  const X = (v) => m.l + (v - x0) / (x1 - x0) * (W - m.l - m.r);
+  const Y = (v) => H - m.b - (v - y0) / (y1 - y0) * (H - m.t - m.b);
+  for (const s of o.shade || []) el("rect", {x: X(s[0]), y: m.t, width: Math.max(1, X(s[1]) - X(s[0])),
+      height: H - m.t - m.b, fill: css("--bad"), opacity: 0.12}, svg);
+  for (const t of o.yTicks || [0, .25, .5, .75, 1]) {
+    el("line", {x1: m.l, x2: W - m.r, y1: Y(t), y2: Y(t), class: "gridline"}, svg);
+    el("text", {x: m.l - 6, y: Y(t) + 4, "text-anchor": "end"}, svg).textContent = o.yFmt ? o.yFmt(t) : t;
+  }
+  for (const t of (W < 400 && (o.xTicks || []).length > 5 ? (o.xTicks || []).filter((_, k) => k % 2 === 0) : o.xTicks || [])) {
+    el("text", {x: X(t), y: H - m.b + 16, "text-anchor": "middle"}, svg).textContent = o.xFmt ? o.xFmt(t) : t;
+  }
+  el("line", {x1: m.l, x2: W - m.r, y1: H - m.b, y2: H - m.b, class: "axis"}, svg);
+  el("text", {x: (m.l + W - m.r) / 2, y: H - 4, "text-anchor": "middle"}, svg).textContent = o.xLabel || "";
+  const yl = el("text", {x: 12, y: (m.t + H - m.b) / 2, "text-anchor": "middle",
+                         transform: `rotate(-90 12 ${(m.t + H - m.b) / 2})`}, svg);
+  yl.textContent = o.yLabel || "";
+  for (const r of o.ref || []) {
+    if (r.diag) el("line", {x1: X(x0), y1: Y(y0), x2: X(x1), y2: Y(y1), stroke: css("--muted"), "stroke-dasharray": "4 4", "stroke-width": 1}, svg);
+    if (r.y != null) el("line", {x1: m.l, x2: W - m.r, y1: Y(r.y), y2: Y(r.y), stroke: r.color || css("--muted"),
+                                 "stroke-dasharray": "5 4", "stroke-width": 1.2}, svg);
+    if (r.x != null) el("line", {x1: X(r.x), x2: X(r.x), y1: m.t, y2: H - m.b, stroke: r.color || css("--muted"),
+                                 "stroke-dasharray": "5 4", "stroke-width": 1.2}, svg);
+  }
+  o.series.forEach((s) => {
+    if (!s.pts.length) return;
+    const d = s.pts.map((p, k) => `${k ? "L" : "M"}${X(p[0]).toFixed(1)},${Y(p[1]).toFixed(1)}`).join("");
+    el("path", {d, fill: "none", stroke: s.color, "stroke-width": 2, "stroke-linejoin": "round",
+                "stroke-linecap": "round", "stroke-dasharray": s.dash || ""}, svg);
+    for (const mk of s.markers || []) {
+      el("circle", {cx: X(mk[0]), cy: Y(mk[1]), r: 5, fill: s.color, stroke: css("--panel"), "stroke-width": 2}, svg);
+    }
+  });
+  // lớp hover
+  const cross = el("line", {y1: m.t, y2: H - m.b, stroke: css("--muted"), "stroke-width": 1, opacity: 0}, svg);
+  const dots = o.series.map((s) => el("circle", {r: 4.5, fill: s.color, stroke: css("--panel"), "stroke-width": 2, opacity: 0}, svg));
+  const hit = el("rect", {x: m.l, y: m.t, width: W - m.l - m.r, height: H - m.t - m.b, fill: "transparent"}, svg);
+  hit.addEventListener("mousemove", (ev) => {
+    const pt = svg.createSVGPoint(); pt.x = ev.clientX; pt.y = ev.clientY;
+    const loc = pt.matrixTransform(svg.getScreenCTM().inverse());
+    const xv = x0 + (loc.x - m.l) / (W - m.l - m.r) * (x1 - x0);
+    cross.setAttribute("x1", loc.x); cross.setAttribute("x2", loc.x); cross.setAttribute("opacity", 0.6);
+    const near = o.series.map((s, i) => {
+      if (!s.pts.length) return null;
+      let best = s.pts[0];
+      for (const p of s.pts) if (Math.abs(p[0] - xv) < Math.abs(best[0] - xv)) best = p;
+      dots[i].setAttribute("cx", X(best[0])); dots[i].setAttribute("cy", Y(best[1])); dots[i].setAttribute("opacity", 1);
+      return [s, best];
+    });
+    showTip(o.tip(xv, near.filter(Boolean)), ev);
+  });
+  hit.addEventListener("mouseleave", () => { hideTip(); cross.setAttribute("opacity", 0); dots.forEach(d => d.setAttribute("opacity", 0)); });
+}
+
+// Biểu đồ cột nhóm: groups = tên chỉ số, values[g][i] = giá trị model i.
+function barChart(box, groups, models, values) {
+  const W = Math.max(280, Math.round(box.clientWidth || 560)), H = Math.round(Math.min(300, Math.max(220, W * 0.5)));
+  const m = {l: 40, r: 10, t: 12, b: 30};
+  box.innerHTML = "";
+  const svg = el("svg", {viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": "Biểu đồ cột so sánh chỉ số"}, box);
+  const Y = (v) => H - m.b - v * (H - m.t - m.b);
+  for (const t of [0, .25, .5, .75, 1]) {
+    el("line", {x1: m.l, x2: W - m.r, y1: Y(t), y2: Y(t), class: "gridline"}, svg);
+    el("text", {x: m.l - 6, y: Y(t) + 4, "text-anchor": "end"}, svg).textContent = t;
+  }
+  const gw = (W - m.l - m.r) / groups.length, n = models.length;
+  const bw = Math.min(26, (gw - 14) / n - 2);
+  groups.forEach((g, gi) => {
+    const gx = m.l + gi * gw + (gw - n * (bw + 2) + 2) / 2;
+    el("text", {x: m.l + gi * gw + gw / 2, y: H - m.b + 18, "text-anchor": "middle"}, svg).textContent =
+      gw < 52 && g.length > 5 ? g.slice(0, 4) + "." : g;
+    models.forEach((mdl, i) => {
+      const v = values[gi][i];
+      if (v == null) return;
+      const x = gx + i * (bw + 2), y = Y(v), h = H - m.b - y;
+      const r = Math.min(4, bw / 2, h);
+      const d = `M${x},${H - m.b}V${y + r}Q${x},${y} ${x + r},${y}H${x + bw - r}Q${x + bw},${y} ${x + bw},${y + r}V${H - m.b}Z`;
+      const bar = el("path", {d, fill: colorOf(i)}, svg);
+      const hitbox = el("rect", {x: x - 1, y: m.t, width: bw + 2, height: H - m.t - m.b, fill: "transparent"}, svg);
+      const on = (ev) => { bar.setAttribute("opacity", 0.8);
+        showTip(`<b>${esc(g)}</b><br><span class="sw" style="background:${colorOf(i)}"></span>${esc(mdl.name)}: <b>${f3(v)}</b>`, ev); };
+      hitbox.addEventListener("mousemove", on);
+      hitbox.addEventListener("mouseleave", () => { bar.removeAttribute("opacity"); hideTip(); });
+    });
+  });
+  el("line", {x1: m.l, x2: W - m.r, y1: H - m.b, y2: H - m.b, class: "axis"}, svg);
+}
+
+// ------------------------------------------------------------------ các khối kết quả
+function metricsOf(mdl) { return MODE === "thr" ? mdl.atthr : mdl.at05; }
+function thrOf(mdl) { return MODE === "thr" ? mdl.threshold : 0.5; }
+
+function bestIdx(vals, higher) {
+  const ok = vals.map((v, i) => [v, i]).filter(([v]) => v != null && !Number.isNaN(v));
+  if (ok.length < 2) return new Set();
+  const target = higher ? Math.max(...ok.map(a => a[0])) : Math.min(...ok.map(a => a[0]));
+  const winners = ok.filter(([v]) => Math.abs(v - target) < 1e-9).map(a => a[1]);
+  return winners.length === ok.length ? new Set() : new Set(winners);
+}
+
+function renderMetricsTable(D) {
+  const M = D.models;
+  const rows = [
+    ["Ngưỡng dùng", M.map(thrOf), null, (v) => v.toFixed(2)],
+    ["F1 (lớp ngã)", M.map(m => metricsOf(m).f1), true, f3],
+    ["  khoảng tin cậy 95% của F1", M.map(m => m.f1_ci), null, (v) => v ? `${f3(v[0])} – ${f3(v[1])}` : "–", MODE !== "thr"],
+    ["Recall – bắt được ngã", M.map(m => metricsOf(m).rec), true, f3],
+    ["Precision – báo ngã là đúng", M.map(m => metricsOf(m).prec), true, f3],
+    ["Specificity – không báo nhầm", M.map(m => metricsOf(m).spec), true, f3],
+    ["Accuracy", M.map(m => metricsOf(m).acc), true, f3],
+    ["AUC (không phụ thuộc ngưỡng)", M.map(m => m.auc), true, f3],
+    ["TP / FN / FP / TN", M.map(m => { const x = metricsOf(m); return `${x.tp} / ${x.fn} / ${x.fp} / ${x.tn}`; }), null, (v) => v],
+    ["Video ngã phát hiện được", M.map(m => m.video.rec), true, (v, i) => `${M[i].video.tp}/${M[i].video.tp + M[i].video.fn} (${pct(v)})`],
+    ["Video sinh hoạt bị báo nhầm", M.map(m => m.video.fp), false, (v, i) => `${v}/${M[i].video.fp + M[i].video.tn}`],
+    ["Số tham số", M.map(m => m.params), false, fmtInt],
+    ["Dung lượng (MB)", M.map(m => m.size_mb), false, (v) => v ?? "–"],
+    ["Thời gian / cửa sổ (ms)", M.map(m => m.latency_ms), false, (v) => v == null ? "–" : v.toFixed(2)],
+    ["Epoch tốt nhất · val F1", M.map(m => m.meta || {}), null,
+      (v) => v.epoch != null ? `${v.epoch} · ${v.val_f1 != null ? Number(v.val_f1).toFixed(3) : "–"}` : "–"],
+  ];
+  const head = `<tr><th>Chỉ số</th>${M.map((m, i) => `<th><span class="sw" style="background:${colorOf(i)}"></span>${esc(m.name)}<br><span class="muted" style="font-weight:400">${esc(m.arch)}</span></th>`).join("")}</tr>`;
+  const body = rows.filter(r => !r[4]).map(([label, vals, higher, fmt]) => {
+    const best = higher == null ? new Set() : bestIdx(vals.map(v => typeof v === "number" ? v : null), higher);
+    return `<tr><td>${esc(label.trim())}</td>${vals.map((v, i) => `<td class="num${best.has(i) ? " best" : ""}">${esc(fmt(v, i))}</td>`).join("")}</tr>`;
+  }).join("");
+  return `<table>${head}${body}</table>`;
+}
+
+function renderConfusion(D) {
+  return `<div class="cms">${D.models.map((m, i) => {
+    const x = metricsOf(m), pos = x.tp + x.fn, neg = x.fp + x.tn;
+    const cell = (v, tot, good) => {
+      const a = tot ? v / tot : 0;
+      const bg = `rgba(${css("--cm")}, ${(0.08 + 0.55 * a).toFixed(2)})`;
+      return `<td style="background:${bg}"><b>${v}</b><small>${pct(a)} ${good ? "✓" : "✗"}</small></td>`;
+    };
+    return `<div class="cm"><div style="margin-bottom:6px"><span class="sw" style="background:${colorOf(i)}"></span><b>${esc(m.name)}</b>
+      <span class="muted">· ngưỡng ${thrOf(m).toFixed(2)}</span></div>
+      <table><tr><th></th><th>Dự đoán ngã</th><th>Dự đoán không ngã</th></tr>
+      <tr><th>Thật: ngã</th>${cell(x.tp, pos, true)}${cell(x.fn, pos, false)}</tr>
+      <tr><th>Thật: không ngã</th>${cell(x.fp, neg, false)}${cell(x.tn, neg, true)}</tr></table></div>`;
+  }).join("")}</div>`;
+}
+
+function renderPairs(D) {
+  if (!D.pairs.length) return "";
+  return `<table><tr><th>Cặp</th><th>Chênh lệch F1 (B − A)</th><th>Khoảng tin cậy 95%</th><th>Tỉ lệ B tốt hơn (bootstrap)</th>
+    <th>Chỉ A đúng</th><th>Chỉ B đúng</th><th>McNemar p</th></tr>` + D.pairs.map(p => {
+      const sig = p.f1_diff_ci && (p.f1_diff_ci[0] > 0 || p.f1_diff_ci[1] < 0);
+      return `<tr><td>A = ${esc(p.a)}<br>B = ${esc(p.b)}</td><td class="num">${p.f1_diff >= 0 ? "+" : ""}${f3(p.f1_diff)}</td>
+        <td class="num">${p.f1_diff_ci ? `${f3(p.f1_diff_ci[0])} … ${f3(p.f1_diff_ci[1])}` : "–"}
+        <br><span class="${sig ? "" : "muted"}">${sig ? "khác biệt đáng tin" : "chứa 0 → chưa kết luận được"}</span></td>
+        <td class="num">${p.prob_b_better == null ? "–" : pct(p.prob_b_better)}</td>
+        <td class="num">${p.mcnemar.only_a_correct}</td><td class="num">${p.mcnemar.only_b_correct}</td>
+        <td class="num">${p.mcnemar.p_value}</td></tr>`;
+    }).join("") + `</table>`;
+}
+
+const STATUS_TXT = {TP: "✓ phát hiện", TN: "✓ không báo", FN: "✗ bỏ sót", FP: "⚠ báo nhầm"};
+function renderVideos(D) {
+  let rows = D.videos;
+  if (VFILTER === "diff") rows = rows.filter(v => v.disagree);
+  if (VFILTER === "fall") rows = rows.filter(v => v.label === "fall");
+  if (VFILTER === "adl") rows = rows.filter(v => v.label === "adl");
+  if (VFILTER === "wrong") rows = rows.filter(v => Object.values(v.models).some(r => r.status === "FN" || r.status === "FP"));
+  const head = `<tr><th>Video</th><th>Nhãn thật</th>${D.models.map((m, i) =>
+    `<th><span class="sw" style="background:${colorOf(i)}"></span>${esc(m.name)}<br><span class="muted" style="font-weight:400">P max · kết luận</span></th>`).join("")}</tr>`;
+  const body = rows.map(v => `<tr class="clickable${v.video === SELVIDEO ? " sel" : ""}" data-v="${esc(v.video)}">
+      <td>${esc(v.video)}${v.disagree ? ' <span class="muted" title="hai model kết luận khác nhau">≠</span>' : ""}</td>
+      <td>${v.label === "fall" ? `ngã (${v.fall_windows}/${v.windows} cửa sổ)` : `sinh hoạt (${v.windows} cửa sổ)`}</td>
+      ${D.models.map(m => { const r = v.models[m.name];
+        return `<td class="num">${f3(r.max_p)} <span class="badge ${r.status}">${STATUS_TXT[r.status]}</span></td>`; }).join("")}</tr>`).join("");
+  return `<table>${head}${body || `<tr><td colspan="${2 + D.models.length}" class="muted">Không có video nào.</td></tr>`}</table>`;
+}
+
+function renderVideoDetail(D) {
+  const box = $("vdetail");
+  if (!SELVIDEO || !D.windows[SELVIDEO]) {
+    box.innerHTML = `<div class="placeholder">Bấm vào một dòng trong bảng để xem P(ngã) từng cửa sổ của video đó.</div>`;
+    return;
+  }
+  const w = D.windows[SELVIDEO], n = w.y.length;
+  const shade = [];
+  w.y.forEach((v, k) => { if (v) shade.push([k - 0.5, k + 0.5]); });
+  $("vdetailTitle").textContent = `Chi tiết: ${SELVIDEO}`;
+  const chartBox = document.createElement("div");
+  chartBox.className = "chart";
+  box.innerHTML = legendHtml(D.models) + `<div class="muted" style="font-size:12px;margin-bottom:4px">Vùng đỏ nhạt = cửa sổ có nhãn ngã thật.
+    Nét đứt = ngưỡng của từng model. Trục ngang: thứ tự cửa sổ 2 s (mỗi cửa sổ lệch nhau 0,5 s).</div>`;
+  box.appendChild(chartBox);
+  lineChart(chartBox, {
+    height: 260, x: [-0.5, Math.max(n - 0.5, 0.5)], y: [0, 1], xLabel: "cửa sổ thứ", yLabel: "P(ngã)", shade,
+    xTicks: ticks(0, n - 1, 8), yFmt: (t) => Math.round(t * 100) + "%",
+    ref: D.models.map((m, i) => ({y: m.threshold, color: colorOf(i)})),
+    series: D.models.map((m, i) => ({name: m.name, color: colorOf(i), pts: w.p[m.name].map((p, k) => [k, p])})),
+    tip: (xv, near) => {
+      const k = Math.max(0, Math.min(n - 1, Math.round(xv)));
+      return `<b>Cửa sổ ${k}</b> · nhãn thật: ${w.y[k] ? "<b>ngã</b>" : "không ngã"}<br>` + near.map(([s, p], i) =>
+        `<span class="sw" style="background:${s.color}"></span>${esc(s.name)}: <b>${pct(p[1])}</b> ${p[1] >= D.models[i].threshold ? "→ NGÃ" : ""}`).join("<br>");
+    },
+  });
+}
+
+function ticks(a, b, count) {
+  if (b <= a) return [a];
+  const step = Math.max(1, Math.ceil((b - a) / count));
+  const out = [];
+  for (let v = a; v <= b; v += step) out.push(v);
+  return out;
+}
+
+function render() {
+  const D = DATA;
+  if (!D) return;
+  const M = D.models;
+  $("hdrInfo").textContent = `${M.map(m => m.name).join(" vs ")} · ${D.dataset.path} · tập ${D.dataset.split}`;
+  const ds = D.dataset;
+  $("result").innerHTML = `
+  <section class="verdict">
+    <h2>Kết luận nhanh</h2>
+    <p class="lead">Tập <b>${esc(ds.split)}</b> của <code>${esc(ds.path)}</code>: ${ds.windows} cửa sổ (${ds.fall} ngã, ${ds.no_fall} không ngã),
+      ${ds.videos} video, ${esc(ds.subjects.join(", "))}. Cửa sổ ${ds.window_size} khung @ ${ds.fps} fps. Tạo lúc ${esc(D.generated)}.</p>
+    <ul>${D.verdict.map(v => `<li>${esc(v)}</li>`).join("")}</ul>
+    ${D.warnings.length ? `<div class="warnbox">${D.warnings.map(esc).join("<br>")}</div>` : ""}
+    ${ds.subjects.length < 3 ? `<div class="muted" style="font-size:12.5px;margin-top:6px">Tập này chỉ có ${ds.subjects.length} người,
+      nên chênh lệch nhỏ có thể do ngẫu nhiên — xem khoảng tin cậy ở mục "Khác biệt có đáng tin không".</div>` : ""}
+  </section>
+
+  <section>
+    <div class="row" style="justify-content:space-between">
+      <div><h2>Chỉ số chính</h2>
+        <p class="lead">Theo cửa sổ 2 s. ★ = tốt nhất ở dòng đó. Ngưỡng của checkpoint là ngưỡng đã chọn trên tập val lúc train.</p></div>
+      <div class="seg noprint" role="group" aria-label="Ngưỡng">
+        <button id="mThr" onclick="setMode('thr')">Ngưỡng của checkpoint</button><button id="m05" onclick="setMode('05')">Ngưỡng 0.5</button></div>
+    </div>
+    <div class="scroll" id="mtable"></div>
+  </section>
+
+  <div class="grid2">
+    <section><h2>Biểu đồ chỉ số</h2><p class="lead">Cao hơn là tốt hơn. Rê chuột lên cột để xem số.</p>
+      ${legendHtml(M)}<div class="chart" id="bars"></div></section>
+    <section><h2>Ma trận nhầm lẫn</h2><p class="lead">FN (thật ngã, đoán không ngã) là lỗi nguy hiểm nhất với hệ thống cảnh báo ngã.</p>
+      <div id="cms"></div></section>
+  </div>
+
+  <div class="grid2">
+    <section><h2>Đường ROC</h2><p class="lead">Càng ôm sát góc trên-trái càng tốt; diện tích dưới đường = AUC. Nét đứt = đoán ngẫu nhiên.</p>
+      ${legendHtml(M)}<div class="chart" id="roc"></div></section>
+    <section><h2>F1 theo ngưỡng</h2><p class="lead">Chấm tròn = ngưỡng mỗi model đang dùng. Đường phẳng, rộng = model ít nhạy với việc chọn ngưỡng.</p>
+      ${legendHtml(M)}<div class="chart" id="f1c"></div></section>
+  </div>
+
+  <section><h2>Khác biệt có đáng tin không</h2>
+    <p class="lead">Khoảng tin cậy tính bằng bootstrap <b>theo video</b> (lấy mẫu lại cả video, 1000 lần). Nếu khoảng chứa 0 thì chưa
+      kết luận được model nào tốt hơn. McNemar đếm các cửa sổ chỉ một trong hai model đúng (cửa sổ chồng nhau nên p chỉ để tham khảo).</p>
+    <div class="scroll">${renderPairs(D) || '<span class="muted">Cần ít nhất hai model.</span>'}</div></section>
+
+  <section><h2>Từng video</h2>
+    <p class="lead">Một video được coi là "báo ngã" nếu có ít nhất một cửa sổ vượt ngưỡng — giống cách cảnh báo hoạt động khi chạy thật.</p>
+    <div class="row noprint" style="margin-bottom:8px">
+      <div class="seg" role="group" aria-label="Lọc video">
+        <button data-f="all">Tất cả</button><button data-f="diff">Hai model khác nhau</button>
+        <button data-f="wrong">Có model sai</button><button data-f="fall">Video ngã</button><button data-f="adl">Video sinh hoạt</button></div>
+    </div>
+    <div class="scroll" id="vtable"></div>
+    <h2 style="margin-top:14px" id="vdetailTitle">Chi tiết video</h2>
+    <div id="vdetail"></div>
+  </section>
+
+  <section class="noprint"><h2>Tải về</h2>
+    <div class="row">
+      ${STANDALONE ? "" : `<a href="/compare/export.csv" download>Bảng chỉ số (.csv)</a>
+      <a href="/compare/export.json" download>Dữ liệu đầy đủ (.json)</a>
+      <a href="/compare/export.html" download>Báo cáo HTML một file (mở không cần server)</a>`}
+      <button onclick="window.print()">In / lưu PDF</button>
+    </div>
+    <details style="margin-top:10px"><summary>Cách đọc nhanh</summary>
+      <ul class="muted" style="font-size:13px">
+        <li><b>Recall</b>: trong các cửa sổ ngã thật, model bắt được bao nhiêu. Ưu tiên cao nhất (bỏ sót ngã nguy hiểm hơn báo nhầm).</li>
+        <li><b>Precision</b> và <b>Specificity</b>: báo nhầm nhiều hay ít.</li>
+        <li><b>F1</b>: cân bằng Precision–Recall, dùng để chọn model.</li>
+        <li><b>AUC</b>: khả năng xếp hạng ngã cao hơn không ngã, không phụ thuộc ngưỡng.</li>
+        <li>Chọn model/ngưỡng bằng tập <b>val</b>; chỉ báo cáo <b>test</b> cho lựa chọn cuối cùng.</li>
+      </ul></details>
+  </section>`;
+  $("mThr").classList.toggle("on", MODE === "thr");
+  $("m05").classList.toggle("on", MODE === "05");
+  document.querySelectorAll("[data-f]").forEach(b => {
+    b.classList.toggle("on", b.dataset.f === VFILTER);
+    b.onclick = () => { VFILTER = b.dataset.f; renderVideoBlock(); document.querySelectorAll("[data-f]").forEach(x => x.classList.toggle("on", x === b)); };
+  });
+  renderModeBlocks();
+  renderCurves();
+  renderVideoBlock();
+}
+
+function renderCurves() {
+  const M = DATA.models;
+  lineChart($("roc"), {
+    x: [0, 1], y: [0, 1], xLabel: "Tỉ lệ báo nhầm (FPR)", yLabel: "Tỉ lệ bắt được ngã (TPR)",
+    xTicks: [0, .25, .5, .75, 1], ref: [{diag: true}],
+    series: M.map((m, i) => ({name: m.name, color: colorOf(i), pts: m.roc})),
+    tip: (xv, near) => `FPR ≈ <b>${f3(xv)}</b><br>` + near.map(([s, p], i) =>
+      `<span class="sw" style="background:${s.color}"></span>${esc(s.name)}: TPR <b>${f3(p[1])}</b> (AUC ${f3(M[i].auc)})`).join("<br>"),
+  });
+  lineChart($("f1c"), {
+    x: [0.05, 0.95], y: [0, 1], xLabel: "Ngưỡng P(ngã)", yLabel: "F1",
+    xTicks: [0.1, 0.3, 0.5, 0.7, 0.9],
+    series: M.map((m, i) => ({name: m.name, color: colorOf(i), pts: m.f1_curve,
+      markers: [[m.threshold, (m.f1_curve.find(p => Math.abs(p[0] - m.threshold) < 0.005) || [0, m.atthr.f1])[1]]]})),
+    tip: (xv, near) => `Ngưỡng <b>${xv.toFixed(2)}</b><br>` + near.map(([s, p]) =>
+      `<span class="sw" style="background:${s.color}"></span>${esc(s.name)}: F1 <b>${f3(p[1])}</b>`).join("<br>"),
+  });
+}
+
+function renderModeBlocks() {
+  const M = DATA.models;
+  $("mtable").innerHTML = renderMetricsTable(DATA);
+  $("cms").innerHTML = renderConfusion(DATA);
+  const groups = ["Acc", "Precision", "Recall", "F1", "Spec", "AUC"];
+  const keys = ["acc", "prec", "rec", "f1", "spec"];
+  const values = groups.map((g, gi) => M.map(m => gi < 5 ? metricsOf(m)[keys[gi]] : m.auc));
+  barChart($("bars"), groups, M, values);
+}
+
+function setMode(mode) {
+  MODE = mode;
+  $("mThr").classList.toggle("on", MODE === "thr");
+  $("m05").classList.toggle("on", MODE === "05");
+  renderModeBlocks();
+}
+
+function renderVideoBlock() {
+  $("vtable").innerHTML = renderVideos(DATA);
+  $("vtable").querySelectorAll("tr.clickable").forEach(tr => tr.addEventListener("click", () => {
+    SELVIDEO = tr.dataset.v; renderVideoBlock();
+  }));
+  if (!SELVIDEO) {                        // mặc định: video đầu tiên mà hai model kết luận khác nhau
+    const first = DATA.videos.find(v => v.disagree) || DATA.videos.find(v => v.label === "fall") || DATA.videos[0];
+    if (first) { SELVIDEO = first.video; return renderVideoBlock(); }
+  }
+  renderVideoDetail(DATA);
+}
+
+// ------------------------------------------------------------------ chế độ web: chọn model, gọi API
+async function initControls() {
+  const box = $("modelBoxes");
+  const pre = OPTIONS.default_models || [];
+  box.innerHTML = '<span class="muted">Model:</span>' + (OPTIONS.checkpoints.length
+    ? OPTIONS.checkpoints.map(c => `<label><input type="checkbox" value="${esc(c)}" ${pre.includes(c) ? "checked" : ""}> ${esc(c.replace(/^models\//, ""))}</label>`).join("")
+    : '<span class="warnbox">Chưa có checkpoint nào trong models/ (train bằng train.py trước).</span>');
+  $("dataSel").innerHTML = OPTIONS.datasets.map(d => `<option>${esc(d)}</option>`).join("")
+    || '<option value="">(không có dataset)</option>';
+  if (OPTIONS.error) $("runStatus").innerHTML = `<span class="warnbox">${esc(OPTIONS.error)}</span>`;
+}
+
+async function runCompare() {
+  const cks = [...document.querySelectorAll("#modelBoxes input:checked")].map(i => i.value);
+  if (!cks.length) { $("runStatus").textContent = "Chọn ít nhất một model."; return; }
+  if (cks.length > 4) { $("runStatus").textContent = "Chọn tối đa 4 model để biểu đồ còn đọc được."; return; }
+  $("runBtn").disabled = true;
+  $("runStatus").textContent = "Đang chạy các model trên tập dữ liệu (đo cả tốc độ)...";
+  try {
+    const res = await fetch("/api/compare", {method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({checkpoints: cks, data: $("dataSel").value, split: $("splitSel").value})});
+    const d = await res.json();
+    if (!res.ok) { $("runStatus").innerHTML = `<span class="warnbox">Lỗi: ${esc(d.error)}</span>`; return; }
+    DATA = d; SELVIDEO = null;
+    $("runStatus").textContent = "Xong.";
+    render();
+  } catch (e) {
+    $("runStatus").innerHTML = `<span class="warnbox">Lỗi kết nối: ${esc(e)}</span>`;
+  } finally { $("runBtn").disabled = false; }
+}
+
+if (!STANDALONE) {
+  initControls();
+  if (OPTIONS.auto_run && OPTIONS.default_models && OPTIONS.default_models.length >= 2) runCompare();
+}
+if (DATA) render();
+// đổi giao diện sáng/tối của hệ điều hành -> vẽ lại bằng màu của chế độ mới
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => { if (DATA) render(); });
+let resizeTimer = null;                 // đổi kích thước cửa sổ -> vẽ lại biểu đồ theo chiều rộng mới
+window.addEventListener("resize", () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => { if (DATA && $("bars")) { renderModeBlocks(); renderCurves(); renderVideoDetail(DATA); } }, 150);
+});
+</script>
+</body>
+</html>

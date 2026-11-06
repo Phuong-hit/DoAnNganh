@@ -24,18 +24,54 @@ from .constants import BONES, NUM_KEYPOINTS
 from .pose_estimate import PoseResult
 
 
+class OneEuro:
+    """One Euro Filter cho vector (Casiez 2012): mượt khi đứng yên, bám sát khi
+    chuyển động nhanh. Đơn vị tọa độ 0-1, thời gian giây."""
+
+    def __init__(self, min_cutoff=1.5, beta=4.0, d_cutoff=1.0):
+        self.min_cutoff, self.beta, self.d_cutoff = min_cutoff, beta, d_cutoff
+        self.x = None
+        self.dx = None
+
+    def reset(self):
+        self.x = None
+        self.dx = None
+
+    @staticmethod
+    def _alpha(cutoff, dt):
+        tau = 1.0 / (2.0 * np.pi * cutoff)
+        return 1.0 / (1.0 + tau / dt)
+
+    def __call__(self, x, dt):
+        x = np.asarray(x, dtype=np.float64)
+        if self.x is None:
+            self.x, self.dx = x.copy(), np.zeros_like(x)
+            return x
+        dx = (x - self.x) / dt
+        a_d = self._alpha(self.d_cutoff, dt)
+        self.dx = a_d * dx + (1 - a_d) * self.dx
+        cutoff = self.min_cutoff + self.beta * float(np.linalg.norm(self.dx))
+        a = self._alpha(cutoff, dt)
+        self.x = a * x + (1 - a) * self.x
+        return self.x.copy()
+
+
 class SkeletonFilter:
     def __init__(
         self,
         alpha: float = 0.5,
-        min_conf: float = 0.30,
-        max_hold_frames: int = 3,
+        min_conf: float = 0.35,
+        max_hold_frames: int = 5,
         history_size: int = 3,
         jump_ratio: float = 0.65,
         min_jump: float = 0.04,       # đơn vị: chiều cao khung (0-1)
         max_bone_ratio: float = 2.5,
         collapse_ratio: float = 0.5,
         max_gap_frames: int = 15,     # số khung valid=False liên tiếp trước khi reset
+        min_cutoff: float = 1.5,      # One Euro: nhỏ hơn = mượt hơn khi đứng yên
+        beta: float = 4.0,            # One Euro: lớn hơn = bám nhanh hơn khi chuyển động
+        smooth_bbox: bool = True,
+        default_dt: float = 0.1,      # dùng khi t không tăng
     ):
         if not 0.0 < alpha <= 1.0:
             raise ValueError("alpha phải nằm trong (0, 1].")
@@ -53,6 +89,10 @@ class SkeletonFilter:
         self.max_bone_ratio = max_bone_ratio
         self.collapse_ratio = collapse_ratio
         self.max_gap_frames = max_gap_frames
+        self.min_cutoff = min_cutoff
+        self.beta = beta
+        self.smooth_bbox = smooth_bbox
+        self.default_dt = default_dt
         self.reset()
 
     def reset(self):
@@ -61,6 +101,9 @@ class SkeletonFilter:
         self.hist = [deque(maxlen=self.history_size) for _ in range(NUM_KEYPOINTS)]
         self.missing = np.zeros(NUM_KEYPOINTS, dtype=int)
         self._gap = 0
+        self._euro = [OneEuro(self.min_cutoff, self.beta) for _ in range(NUM_KEYPOINTS)]
+        self._bbox_euro = OneEuro(self.min_cutoff, self.beta)
+        self._last_t = None
 
     # ------------------------------------------------------------------
     @staticmethod
@@ -99,11 +142,24 @@ class SkeletonFilter:
     def smooth(self, pose: PoseResult) -> PoseResult:
         """Trả PoseResult mới, không sửa đầu vào."""
         if not pose.valid:
+            # Khung mất người cũng tính là mất khớp: khớp giữ tạm không sống
+            # lâu hơn max_hold_frames, và khi tìm lại sẽ được snap.
+            self.missing += 1
+            for i in np.flatnonzero(self.missing > self.max_hold_frames):
+                self.hist[i].clear()
+                self.prev_xy[i] = np.nan
+                self._euro[i].reset()
             self._gap += 1
             if self._gap > self.max_gap_frames:
                 self.reset()
             return pose
         self._gap = 0
+
+        dt = self.default_dt
+        if self._last_t is not None and pose.t > self._last_t:
+            dt = pose.t - self._last_t
+        self._last_t = pose.t
+        dt = max(dt, 1e-3)  # tránh chia cho dt ~ 0 (webcam)
 
         n = NUM_KEYPOINTS
         xy = pose.joints[:, :2].astype(np.float64)
@@ -148,11 +204,10 @@ class SkeletonFilter:
                 med = np.median(np.stack(self.hist[i]), axis=0)
 
                 if has_prev[i] and not snap[i]:
-                    motion = float(self._dist(xy[i], self.prev_xy[i], aspect))
-                    a = min(1.0, self.alpha + (1 - self.alpha) * min(1.0, motion / jump_limit))
-                    new = a * med + (1 - a) * self.prev_xy[i]
+                    new = self._euro[i](med, dt)
                 else:
-                    new = med
+                    self._euro[i].reset()
+                    new = self._euro[i](med, dt)
 
                 out[i] = (new[0], new[1], conf[i])
                 self.prev_xy[i] = new
@@ -165,5 +220,10 @@ class SkeletonFilter:
                 else:
                     self.hist[i].clear()
                     self.prev_xy[i] = np.nan
+                    self._euro[i].reset()
 
-        return replace(pose, joints=out)
+        bbox = pose.bbox
+        if self.smooth_bbox and bbox is not None:
+            bbox = tuple(float(v) for v in self._bbox_euro(np.asarray(bbox), dt))
+
+        return replace(pose, joints=out, bbox=bbox)
