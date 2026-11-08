@@ -1,0 +1,113 @@
+{
+  "arch": "lstm",
+  "model_kwargs": {
+    "dropout": 0.5
+  },
+  "params": 275884,
+  "checkpoint": "D:\\documentss\\DoAnNganh\\FallApp\\fall_web\\models\\b1\\drop5_s42.pt",
+  "data": "data\\datasetv1_lying.npz",
+  "data_format": "code_1",
+  "window_size": 17,
+  "fps": 10.0,
+  "device": "cuda",
+  "best_epoch": 33,
+  "epochs_run": 48,
+  "train_minutes": 0.77,
+  "threshold": 0.83,
+  "merged_val": false,
+  "val_05": {
+    "acc": 0.9820574162679426,
+    "prec": 0.95,
+    "rec": 0.9812206572769953,
+    "f1": 0.9653579676674364,
+    "spec": 0.9823434991974318,
+    "tp": 209,
+    "fp": 11,
+    "fn": 4,
+    "tn": 612,
+    "threshold": 0.5
+  },
+  "val_thr": {
+    "acc": 0.9856459330143541,
+    "prec": 0.971830985915493,
+    "rec": 0.971830985915493,
+    "f1": 0.971830985915493,
+    "spec": 0.9903691813804173,
+    "tp": 207,
+    "fp": 6,
+    "fn": 6,
+    "tn": 617,
+    "threshold": 0.83
+  },
+  "val_auc": 0.9983948635634029,
+  "test_05": {
+    "acc": 0.9903660886319846,
+    "prec": 0.9878542510121457,
+    "rec": 0.991869918699187,
+    "f1": 0.9898580121703855,
+    "spec": 0.989010989010989,
+    "tp": 244,
+    "fp": 3,
+    "fn": 2,
+    "tn": 270,
+    "threshold": 0.5
+  },
+  "test_thr": {
+    "acc": 0.9865125240847784,
+    "prec": 0.9877551020408163,
+    "rec": 0.983739837398374,
+    "f1": 0.9857433808553971,
+    "spec": 0.989010989010989,
+    "tp": 242,
+    "fp": 3,
+    "fn": 4,
+    "tn": 270,
+    "threshold": 0.83
+  },
+  "test_auc": 0.9991512552488162,
+  "test_video": {
+    "acc": 0.985,
+    "prec": 0.9759036144578314,
+    "rec": 0.9878048780487805,
+    "f1": 0.9818181818181818,
+    "spec": 0.9830508474576272,
+    "tp": 81,
+    "fp": 2,
+    "fn": 1,
+    "tn": 116,
+    "videos": 200
+  },
+  "args": {
+    "arch": "lstm",
+    "data": "data\\datasetv1_lying.npz",
+    "out": "D:\\documentss\\DoAnNganh\\FallApp\\fall_web\\models\\b1\\drop5_s42.pt",
+    "model_kw": [
+      "dropout=0.5"
+    ],
+    "epochs": 60,
+    "batch_size": 32,
+    "lr": 0.001,
+    "weight_decay": 0.0001,
+    "patience": 15,
+    "seed": 42,
+    "jitter": 0.01,
+    "no_flip": false,
+    "clip_grad": 0.0,
+    "tune_threshold": true,
+    "device": null,
+    "fps": null,
+    "final": false,
+    "merge_val": false,
+    "from_report": null,
+    "stop_epoch": null,
+    "threshold": null,
+    "split_seed": 0,
+    "save_pred": false
+  },
+  "speed_gate": {
+    "enabled": true,
+    "shoulder_drop": 1.6,
+    "rotation": 70.0,
+    "keep_if_p_above": null
+  }
+}
