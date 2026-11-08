@@ -1,8 +1,11 @@
-# Fall Web — giao diện web cho pipeline pose (newfilecode)
+# Fall Web — phát hiện ngã từ skeleton
 
 Phục vụ đồ án *Hệ thống phát hiện ngã dựa trên skeleton trên thiết bị biên*.
 
+Video / webcam → YOLO-pose → lọc skeleton → cửa sổ 17 khung → một trong ba model: **B0** (luật),
+**B1** (LSTM), **B2** (Shift-GCN) → NGÃ / KHÔNG NGÃ, chạy và xem trên giao diện web. Kết quả so sánh ở mục 10.
 
+```
  Nguồn                       src/                                     Web
 ┌──────────────┐ khung ┌──────────────┐ PoseResult ┌────────────────┐ ┌──────────────────────────┐
 │ FileSource   │──────►│ PoseEstimate │───────────►│ SkeletonFilter │►│ CSVExporter → CSV        │
@@ -10,7 +13,7 @@ Phục vụ đồ án *Hệ thống phát hiện ngã dựa trên skeleton trên
 └──────────────┘       └──────────────┘            └────────────────┘ │ SkeletonDraw → MJPEG     │
                                                            │          └──────────────────────────┘
                                                            ▼
-                                      FallClassifier (cửa sổ 20 khung, ST-GCN / LSTM) → NGÃ / không ngã
+                                      FallClassifier (cửa sổ 17 khung, B0 / B1 / B2) → NGÃ / không ngã
 ```
 
 ## 1. Cài đặt
@@ -22,20 +25,30 @@ pip install -r requirements.txt      # có ultralytics (kéo theo PyTorch)
 python -m unittest discover tests    # kiểm thử bằng pose giả, không cần model
 ```
 
-Trọng số `models/yolov8n-pose.pt` đã có sẵn (lấy từ fall_app).
+Trọng số YOLO-pose không nằm trong git. Tải về `models/` trước khi chạy (`configs/v1.yaml` cần `yolo26m-pose.pt`,
+`configs/web.yaml` cần `yolov8n-pose.pt`):
+
+```bash
+cd models
+python -c "from ultralytics.utils.downloads import attempt_download_asset as a; a('yolo26m-pose.pt')"
+cd ..
+```
+
+Model phân loại ngã đã có sẵn trong `models/`: `b0_rule_v1.json`, `b1_lstm.pt`, `shiftgcn_best.pt`.
 
 ## 2. Chạy
 
 Luôn chạy từ thư mục gốc project (cùng cấp với `src/`).
 
 ```bash
-python run_web.py                                  # mở http://127.0.0.1:5000
+python run_web.py --config configs/v1.yaml         # nên dùng: pose giống lúc tạo dataset, mở http://127.0.0.1:5000
+python run_web.py                                  # cấu hình mặc định configs/web.yaml
 python run_web.py web --host 0.0.0.0 --port 5000   # cho máy khác trong mạng LAN mở
 python run_web.py --set pose.backend=dummy         # chạy thử giao diện khi chưa cài ultralytics
 python run_web.py scan                             # quét video -> data/metadata.csv (giống nút "Quét video")
 python run_web.py check-csv                        # kiểm tra mọi CSV của cấu hình hiện tại
 python run_web.py build-dataset                    # NPZ + nhãn -> output/<cấu hình>/dataset/windows.npz
-python run_web.py --set classifier.checkpoint=models/stgcn_fall.pt   # bật phát hiện ngã
+python run_web.py --set classifier.checkpoint=models/shiftgcn_best.pt   # đổi model phân loại (cũng đổi được trên web)
 ```
 
 Quy trình thường dùng:
@@ -45,8 +58,8 @@ Quy trình thường dùng:
    `subject_id`, `split`… (các cột này được giữ nguyên khi quét lại).
 3. Bấm **Trích tất cả** (hoặc *trích* ở từng dòng) → CSV ở `output/<cấu hình>/csv/<video_id>.csv`.
 4. Bấm tên video để phát lại kèm khung xương; bấm *kiểm tra* để xem CSV có dùng được cho xử lý chuỗi không.
-5. Bấm **Tạo dataset** (hoặc `run_web.py build-dataset`) → `windows.npz` để huấn luyện ST-GCN / LSTM.
-6. Có checkpoint thì đặt `classifier.checkpoint` → luồng trực tiếp có nhãn **FALL / no fall**, trình phát có dải P(ngã).
+5. Bấm **Tạo dataset** (hoặc `run_web.py build-dataset`) → `windows.npz` để huấn luyện.
+6. Chọn model ở ô **Model** trên web (`b0_rule_v1.json`, `b1_lstm.pt`, `shiftgcn_best.pt` hoặc `tắt`) → luồng trực tiếp có nhãn **FALL / no fall**, trình phát có dải P(ngã).
 
 Ghi đè cấu hình không cần sửa file: `python run_web.py --set source.target_fps=15 --set filter.enabled=false`.
 
@@ -64,49 +77,53 @@ Ghi đè cấu hình không cần sửa file: `python run_web.py --set source.ta
 | Kiểm tra CSV | Xem mục 5 |
 | Trạng thái ngã | Khung lớn phía trên video: **NGÃ! / KHÔNG NGÃ / ĐANG GOM KHUNG / CHƯA BẬT** (kèm lý do), tỉ lệ ngã P(ngã) dạng % và thanh có vạch ngưỡng, biểu đồ P(ngã) theo thời gian, danh sách các lần phát hiện ngã. Ô **Model** đổi checkpoint ngay trên web. Mặc định `classifier.checkpoint: auto` (best_lstm.pt, không có thì best_stgcn.pt) |
 | Phát hiện ngã | Khi có `classifier.checkpoint`: luồng trực tiếp vẽ nhãn **FALL p / no fall p** ở góc phải trên, thống kê có P(ngã) và thời gian phân loại. Trình phát vẽ nhãn và dải P(ngã) theo thời gian (tính từ NPZ, cùng cách cắt/chuẩn hóa). Tắt bằng ô *Phát hiện ngã*. Không có checkpoint hoặc thiếu torch: web vẫn chạy, đầu trang báo lý do |
-| Tạo dataset | NPZ đã trích + `fall_start_s/fall_end_s/split/subject_id` trong metadata → `windows.npz` (mục 10) |
+| Tạo dataset | NPZ đã trích + `fall_start_s/fall_end_s/split/subject_id` trong metadata → `windows.npz` (mục 9) |
 | Tải về | CSV gốc (dạng rộng, đúng định dạng `CSVExporter`), CSV dạng dài (1 dòng/khớp), bảng `_extract_summary.csv` (số khung, tỉ lệ có người, `missing_ratio`, latency, FPS từng video) |
 
 ## 4. Cấu trúc thư mục
 
 ```
 fall_web/
-├── run_web.py              # điểm chạy (web / scan / check-csv / build-dataset)
-├── train.py  evaluate.py  main.py                       # B1: huấn luyện, so sánh, chạy video (HUONG_DAN_B1.md)
-├── extract_skeleton.py  make_intervals.py  build_dataset.py   # tạo dataset kiểu code_1
-├── HUONG_DAN_B1.md         # hướng dẫn B1 chi tiết
-├── configs/web.yaml        # mọi thiết lập: FPS, model, ngưỡng, bộ lọc, tham số kiểm tra
-├── configs/code1.yaml      # như trên nhưng tham số pose giống lúc tạo data/dataset.npz
-├── src/                    # newfilecode — GIỮ NGUYÊN, xem HUONG_DAN.md
+├── run_web.py              # điểm chạy web (web / scan / check-csv / build-dataset)
+├── main.py                 # chạy trên video / webcam bằng cửa sổ OpenCV
+├── test_tool.py            # Test Tool B0/B1/B2 trên bộ test chung
+├── app_check.py            # chạy video thật qua pipeline App, so với bộ test
+├── train.py  evaluate.py  tune_b0.py  tune_b1.py        # huấn luyện, so sánh, dò tham số B0, tinh chỉnh B1
+├── extract_skeleton.py  build_dataset_v1.py             # video -> skeleton NPZ -> datasetv1
+├── build_lying_negatives.py                             # thêm mẫu "nằm mà không ngã" -> datasetv1_lying
+├── build_dataset.py  make_intervals.py  check_labels.py  calibrate_gate.py   # công cụ dataset cũ, cổng tốc độ
+├── configs/v1.yaml         # nên dùng: pose giống lúc tạo datasetv1, cửa sổ 17 khung
+├── configs/web.yaml  code1.yaml  v6.yaml                # các cấu hình pose khác
+├── src/
 │   ├── constants.py  pose_estimate.py  skeleton_filter.py  skeleton_draw.py
 │   ├── video_process.py  webcam.py  csv_export.py
 │   ├── skeleton_io.py      # list[PoseResult] -> seq/mask, cắt cửa sổ (make_windows)
-│   ├── features.py         # normalize_clip: chuẩn hóa clip — dùng CHUNG lúc train và lúc chạy
-│   ├── graph.py  model_stgcn.py   # ST-GCN (đăng ký arch "stgcn")
-│   ├── classifier.py       # FallClassifier + registry model + save_checkpoint (chung cho ST-GCN/LSTM)
-│   ├── model_lstm.py       # LSTM (B1, arch "lstm")
-│   ├── train_utils.py      # đọc dataset, tăng cường, chỉ số (numpy)
-│   └── stgcn_inference.py  # tên cũ STGCNInference, giờ là lớp con của FallClassifier
-├── web/                    # lớp giao diện, chỉ gọi lại src/
-│   ├── engine.py           # tạo đối tượng từ cấu hình, chọn FileSource/StreamSource, đo latency, trích -> CSV
+│   ├── features.py         # normalize_clip: chuẩn hóa clip, dùng CHUNG lúc train và lúc chạy
+│   ├── motion.py           # đặc trưng tốc độ + cổng tốc độ
+│   ├── classifier.py       # FallClassifier + registry model (dùng chung cho mọi model)
+│   ├── b0_rule.py          # B0: luật
+│   ├── model_lstm.py       # B1: LSTM
+│   ├── model_shiftgcn.py  shiftgcn_inference.py         # B2: Shift-GCN (giữ nguyên bản của nhóm)
+│   ├── model_adapters.py   # nối Shift-GCN và B0 vào FallClassifier
+│   ├── graph.py  model_stgcn.py  stgcn_inference.py     # ST-GCN (vẫn train được, hiện không có checkpoint)
+│   ├── testset.py          # tạo / kiểm tra bộ test chung
+│   └── train_utils.py  data_utils.py                    # đọc dataset, tăng cường, chỉ số
+├── web/                    # giao diện, chỉ gọi lại src/
+│   ├── engine.py           # tạo đối tượng từ cấu hình, chọn nguồn video, đo latency, trích -> CSV
 │   ├── server.py           # Flask: trang, MJPEG, API, tải về
-│   ├── videos.py           # quét data/videos -> metadata.csv, kiểm tra nhãn/rò rỉ
-│   ├── csv_tools.py        # đọc CSV, chuyển dạng dài, kiểm tra cho xử lý chuỗi
-│   ├── dataset.py          # NPZ + metadata -> windows.npz
-│   ├── dummy_backend.py    # backend pose giả (cài giao diện PoseBackend) để test
-│   ├── config.py
-│   └── templates/index.html
-├── data/videos/{fall,adl}/ # video đầu vào
-├── data/metadata.csv       # sinh bởi "Quét video"
-├── output/<cấu hình>/      # ví dụ output/yolov8n-pose_10fps_filt/
-│   ├── csv/<video_id>.csv
-│   ├── npz/<video_id>.npz  # seq, mask, valid, t, frame_idx, fps, aspect (đầu vào dataset)
-│   ├── dataset/windows.npz
-│   └── _extract_summary.csv
-├── models/yolov8n-pose.pt  models/best_stgcn.pt
-├── data/dataset.npz        # dataset code_1 (train S2,S4 / val S1 / test S3)
-├── tests/test_web.py  tests/test_model.py  tests/test_train.py
-├── HUONG_DAN.md            # tài liệu gốc của newfilecode
+│   ├── compare.py          # trang so sánh model
+│   ├── videos.py  csv_tools.py  dataset.py  frames.py  dummy_backend.py  config.py
+│   └── templates/
+├── models/                 # b0_rule_v1.json, b1_lstm.pt, shiftgcn_best.pt + trọng số YOLO-pose
+├── data/
+│   ├── testsets/v1_test/  v1_lying/                     # bộ test chung (không ghi đè)
+│   ├── datasetv1.npz  datasetv1_lying.npz               # dataset 17 khung
+│   ├── dataset.npz  dataset_clean.npz                   # dataset 20 khung cũ
+│   └── videos/{fall,adl}/  metadata.csv                 # video của nhóm
+├── output/<cấu hình>/      # csv/, npz/, dataset/windows.npz, _extract_summary.csv
+├── output/test_runs/  output/app_check/                 # kết quả Test Tool và app_check
+├── tests/
+├── HUONG_DAN.md  HUONG_DAN_B1.md
 └── requirements.txt
 ```
 
@@ -150,8 +167,9 @@ Tham số cửa sổ ở mục `check:` của `configs/web.yaml` (mặc định 
 | `pose.iou`, `pose.imgsz` | 0.5, null | NMS IoU; kích thước ảnh vào YOLO (320 để gần MaixCAM) |
 | `filter.enabled` + các tham số | true | Bật SkeletonFilter khi trích. Làm mượt bằng One Euro: `min_cutoff` 1.5, `beta` 4.0 |
 | `draw.min_conf`, `draw.show_bbox` | 0.35, true | Ngưỡng vẽ khớp; hộp bao + score trên ảnh MJPEG |
-| `classifier.checkpoint` | auto | `auto` = models/best_lstm.pt, không có thì best_stgcn.pt; hoặc đường dẫn; null = tắt |
-| `classifier.threshold`, `stride_frames`, `window_size` | 0.5, 5, null | P(ngã) ≥ ngưỡng → NGÃ; dự đoán mỗi 5 khung; cửa sổ lấy từ checkpoint |
+| `classifier.checkpoint` | models/b1_lstm.pt | Đường dẫn model (`.pt` hoặc `models/b0_*.json`); null = tắt |
+| `classifier.threshold`, `stride_frames`, `window_size` | null, 5, null | P(ngã) ≥ ngưỡng → NGÃ (null = ngưỡng lưu trong checkpoint); dự đoán mỗi 5 khung (`v1.yaml`: mỗi khung); cửa sổ lấy từ checkpoint |
+| `classifier.speed_gate` | null | null = cổng tốc độ lưu trong checkpoint (chỉ B1 có), không có thì tắt |
 | `dataset.win_sec`, `stride_sec`, `min_overlap` | 2.0, 0.5, 0.3 | Cắt cửa sổ khi tạo dataset (2 s @ 10 fps = 20 khung) |
 
 ## 7. API (cho ai muốn gọi từ script)
@@ -172,80 +190,81 @@ Tham số cửa sổ ở mục `check:` của `configs/web.yaml` (mặc định 
 | GET | `/stream?...&classify=1` | Luồng MJPEG kèm phân loại ngã |
 | GET | `/api/predict/<video_id>` | P(ngã) theo thời gian của video đã trích (`t`, `p`, `threshold`) |
 | POST | `/api/build-dataset` | Tạo `windows.npz` |
-| GET | `/compare` | Trang so sánh model (ST-GCN vs LSTM…) |
+| GET | `/compare` | Trang so sánh model |
 | POST | `/api/compare` body `{"checkpoints": [...], "data": "data/dataset.npz", "split": "test"}` | Chạy so sánh, trả JSON |
 | GET | `/compare/export.csv` / `.json` / `.html` | Tải kết quả so sánh gần nhất (HTML = báo cáo một file) |
-| GET / POST | `/api/classifier` body `{"checkpoint": "models/best_lstm.pt" \| "auto" \| null}` | Xem / đổi model phân loại |
+| GET / POST | `/api/classifier` body `{"checkpoint": "models/b1_lstm.pt" \| null}` | Xem / đổi model phân loại |
 
-## 8. Hạn chế 
+## 8. Hạn chế đã biết
 
-- Chưa chạy thử với YOLO thật, video thật có người, hay webcam thật. Đã kiểm thử đầu-cuối bằng backend giả,
-  gồm cả `StreamSource` đọc một luồng MJPEG qua HTTP.
-- Phần PyTorch (ST-GCN, `FallClassifier`, phát hiện ngã trên web) chưa được chạy trong môi trường bàn giao vì không cài được
-  torch; test `test_classifier_end_to_end` tự bỏ qua khi thiếu torch. Chạy `python -m unittest discover tests` trên máy có torch để xác nhận.
+- **Nằm vẫn có thể bị báo ngã.** Dataset gốc gần như không có mẫu nằm mà không ngã. B1 đã được bổ sung bằng mẫu tạo thêm
+  và cổng tốc độ nhưng còn báo nhầm 1/5 video ADL của nhóm (`sub3_08`). B2 (Shift-GCN) giữ nguyên bản của nhóm nên báo nhầm 4/5.
+- **Skeleton trên App lệch dataset** khoảng 0,3 độ dài xương dù đã chỉnh pose giống `extract_skeleton.py`, có thể do bước lọc
+  tạo `output/npz_filtered` chưa tái hiện được.
+- Mẫu "nằm mà không ngã" là mẫu tạo thêm, video thật mới có 5 ADL của nhóm. Cần quay thêm để đánh giá chắc hơn.
+- `test_compare_routes` trong `tests/test_train.py` thất bại nếu không có `models/best_stgcn.pt`.
 - `pose.use_tracker: true` cần gói `lap` (ByteTrack); ultralytics thường tự cài lần đầu, nếu lỗi thì `pip install lap`.
 - Trình duyệt không phát được video mã hóa `mp4v` / AVI-XVID (ô ghi chú dưới trình phát sẽ báo). Chuyển sang MP4 H.264
   (`ffmpeg -i in.avi -c:v libx264 out.mp4`) hoặc xem bằng ô nguồn + **Xem** (luồng MJPEG không phụ thuộc codec trình duyệt).
 - Web chỉ theo dõi **một người** (giới hạn của `PoseEstimate` / `SkeletonFilter`).
 
-## 10. B1: LSTM, huấn luyện và so sánh với ST-GCN
+## 9. Huấn luyện và công cụ
 
-Đã có đủ, hướng dẫn từng bước (VSCode, cài đặt, train, đánh giá, chạy thật, lỗi thường gặp) ở
-[`HUONG_DAN_B1.md`](HUONG_DAN_B1.md). Tóm tắt:
+Hướng dẫn chi tiết ở [`HUONG_DAN_B1.md`](HUONG_DAN_B1.md) (viết cho dataset 20 khung cũ; lệnh train vẫn dùng được).
 
 ```bash
-pip install torch && pip install -r requirements.txt
-python -m unittest discover tests                                    # không còn test nào bị bỏ qua
-python train.py --arch lstm  --final                                 # -> models/lstm.pt  (model cuối)
-python train.py --arch stgcn --final                                 # -> models/stgcn.pt (model cuối)
-python test_tool.py   # B0/B1/B2 trên bộ test chung (mục 11 README)
-python run_web.py --config configs/code1.yaml                        # web tự dùng models/lstm.pt
+python build_lying_negatives.py                      # tạo data/datasetv1_lying.npz
+python tune_b1.py --data data/datasetv1_lying.npz    # thử nhiều cấu hình LSTM, chọn theo val
+python train.py --arch lstm --data data/datasetv1_lying.npz --out models/x.pt   # train một cấu hình
+python tune_b0.py --data data/datasetv1.npz --name b0_rule_v1                   # dò tham số B0 trên train
 ```
 
 | Tệp | Vai trò |
 |---|---|
-| `src/model_lstm.py` | LSTM (`arch="lstm"`), cùng đầu vào `[N,3,20,17]` / đầu ra `[N,2]` với ST-GCN |
-| `src/train_utils.py` | Đọc dataset (code_1 hoặc web), tăng cường, chỉ số, chọn ngưỡng (chỉ numpy) |
-| `train.py` | Huấn luyện `--arch lstm` hoặc `--arch stgcn` (cách huấn luyện giữ như train.py của code_1); `--merge-val` gộp val vào train |
-| `evaluate.py` | So sánh checkpoint trên cùng tập test: F1, recall, AUC, theo video, tham số, ms/cửa sổ; `--html` xuất báo cáo một file |
-| `web/compare.py`, `web/templates/compare.html` | Trang **So sánh model** (`/compare`): biểu đồ, ROC, ma trận nhầm lẫn, khoảng tin cậy, từng video |
-| `src/motion.py`, `calibrate_gate.py` | **Cổng tốc độ**: chỉ xác nhận ngã khi vai hạ / thân xoay đủ nhanh (phân biệt ngã với nằm xuống, leo giường); chọn ngưỡng trên val |
-| `check_labels.py` | Tìm cửa sổ "nằm yên" bị gán nhãn ngã (nguyên nhân nằm bình thường bị báo ngã), `--fix` ghi dataset sạch |
-| `data/dataset_clean.npz` | `dataset.npz` đã sửa 75 nhãn nằm yên → 0 ở train/val (test giữ nguyên) |
-| `main.py` | Chạy trên video/webcam bằng đúng pipeline đã tạo dữ liệu (thay main.py của code_1) |
-| `extract_skeleton.py`, `make_intervals.py`, `build_dataset.py` | Script tạo dataset của code_1 (giữ nguyên, chỉ đổi model mặc định) |
-| `configs/code1.yaml` | Tham số pose giống lúc tạo `data/dataset.npz` |
-| `data/dataset.npz`, `models/best_stgcn.pt` | Dataset và ST-GCN của code_1 |
-| `.vscode/` | Interpreter, test, cấu hình F5 (train, so sánh, chạy video, web) |
+| `train.py` | Huấn luyện `--arch lstm` hoặc `--arch stgcn`; ngưỡng chọn trên val, lưu trong checkpoint |
+| `tune_b1.py` | Nhiều cấu hình × nhiều seed, chọn theo val; `--reselect` chọn lại không train |
+| `evaluate.py`, trang `/compare` | So sánh checkpoint trên một dataset: F1, AUC, ROC, ms/cửa sổ, báo cáo HTML |
+| `src/motion.py`, `calibrate_gate.py` | Cổng tốc độ: chỉ xác nhận ngã khi vai hạ / thân xoay đủ nhanh |
+| `check_labels.py` | Tìm cửa sổ "nằm yên" bị gán nhãn ngã trong dataset cũ, `--fix` ghi dataset sạch |
+| `extract_skeleton.py`, `build_dataset_v1.py` | Video → skeleton NPZ → dataset 17 khung |
 
-Thêm kiến trúc khác sau này: một tệp `src/model_<tên>.py` có `@register_model("<tên>")`, thêm tên module vào
+Thêm kiến trúc mới: một tệp `src/model_<tên>.py` có `@register_model("<tên>")`, thêm tên module vào
 `_BUILTIN_MODULES` trong `src/classifier.py`, rồi `python train.py --arch <tên>`.
 
-## 11. Bộ test chung, Test Tool B0/B1/B2, kết nối App
+## 10. Bộ test chung, Test Tool B0/B1/B2, kết nối App
 
 Cả nhóm đánh giá trên **cùng một bộ test** `data/testsets/v1_test/` (split test của `data/datasetv1.npz`:
 subject SBJ13, SBJ17, SBJ28; 441 cửa sổ 17 khung @ 10 fps; 147 video, 82 ngã). `manifest.json` ghi nguồn,
 quy ước nhãn (0 = ADL, 1 = Fall), định dạng và mã băm nội dung; `load_testset()` báo lỗi nếu dữ liệu bị sửa.
+`data/testsets/v1_lying/` là bộ trên cộng 78 cửa sổ tạo thêm (nằm yên, nằm xuống chậm, nhãn 0), vì `v1_test` không có ADL nằm.
 
 | Vai trò | Model | File |
 |---|---|---|
 | B0 | Luật (Phúc), tham số dò trên train của datasetv1 | `models/b0_rule_v1.json` (`tune_b0.py --data data/datasetv1.npz --name b0_rule_v1`) |
 | B1 | LSTM (dropout 0.5) train trên `data/datasetv1_lying.npz` (`build_lying_negatives.py`: thêm mẫu nằm yên / nằm xuống chậm), cổng tốc độ vai 1.6 thân/s, xoay 70 độ/s lưu trong checkpoint | `models/b1_lstm.pt` |
-| B2 | Shift-GCN (`src/model_shiftgcn.py`, arch `shiftgcn`) | `models/shiftgcn_best.pt` |
+| B2 | Shift-GCN, giữ nguyên bản của nhóm (`src/model_shiftgcn.py`, arch `shiftgcn`), không có cổng tốc độ | `models/shiftgcn_best.pt` |
 
 ```bash
-python test_tool.py --make-testset v1_test --data data/datasetv1.npz --split test   # tạo bộ test (một lần)
-python test_tool.py                                   # B0/B1/B2 trên bộ test chung -> output/test_runs/<thời gian>/
-python test_tool.py --extra stgcn=models/x.pt         # thêm model để so sánh
-python build_lying_negatives.py                       # tạo data/datasetv1_lying.npz
-python tune_b1.py --data data/datasetv1_lying.npz     # tinh chỉnh B1, chọn theo val
+python test_tool.py                                   # B0/B1/B2 trên v1_test -> output/test_runs/<thời gian>/
 python test_tool.py --testset data/testsets/v1_lying  # bộ test có thêm tình huống nằm mà không ngã
+python test_tool.py --extra tên=models/x.pt           # thêm model để so sánh
+python test_tool.py --make-testset v2_test --data data/x.npz --split test   # tạo bộ test mới (không ghi đè bộ cũ)
 python app_check.py                                   # chạy video thật qua pipeline App, so với bộ test
 python run_web.py --config configs/v1.yaml            # web với pose giống lúc trích datasetv1 + B1
 ```
 
 Test Tool ghi `report.md` (bảng P/R/F1 theo cửa sổ và theo video, thời gian xử lý, phân tích báo nhầm / bỏ sót
 theo hành động và hướng camera), `predictions.csv` (nhãn thật + dự đoán từng cửa sổ), `video_predictions.csv`,
-`errors.csv`, `comparison.csv`, `summary.json`. `FallClassifier` đọc thẳng checkpoint Shift-GCN của nhóm
-(`model_state_dict`, `num_frames`, ...), nên web, `main.py`, `evaluate.py` dùng được ngay.
+`errors.csv`, `by_activity.csv`, `comparison.csv`, `summary.json`. `FallClassifier` đọc được checkpoint Shift-GCN của nhóm
+(`model_state_dict`, `num_frames`, ...) và file JSON của B0, nên web và `main.py` dùng chung một đường.
 `build_dataset_v1.py` là script tạo `datasetv1.npz` (cửa sổ 17 khung, stride 1, nhãn theo cả video).
+
+**Kết quả hiện tại:**
+
+| Model | F1 `v1_test` | F1 `v1_lying` | ms/cửa sổ (CPU) | Video nhóm: ADL báo nhầm | Video nhóm: ngã bắt được |
+|---|---|---|---|---|---|
+| B0 | 0.923 | 0.906 | 0.2 | 3/5 | 3/4 |
+| B1 | 0.979 | 0.979 | 1.6 | 1/5 | 4/4 |
+| B2 | 0.984 | 0.907 | 3.2 | 4/5 | 4/4 |
+
+`v1_lying` dùng cùng cách tạo mẫu với lúc train B1 nên có lợi cho B1. Video nhóm chỉ có 9 video (5 ADL, 4 ngã).

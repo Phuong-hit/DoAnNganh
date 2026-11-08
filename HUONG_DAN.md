@@ -17,7 +17,7 @@ Tài liệu này giải thích **logic của từng tệp và lý do thiết k�
 >   `classifier.py` (`FallClassifier` dùng chung cho mọi kiến trúc), `stgcn_inference.py` (tên cũ, lớp con của `FallClassifier`).
 > - Sửa nhỏ khi ghép: `graph.py` đổi `from src.constants` thành import tương đối; `model_stgcn.py` thêm
 >   `@register_model("stgcn")`; `stgcn_inference.py` chuyển logic sang `classifier.py` (API giữ nguyên).
-> - `main.py` không có trong bộ này; giao diện web (`web/engine.py`) đóng vai trò nối các khối. Xem README mục 10 cho B1 (LSTM).
+> - `main.py` không có trong bộ này; giao diện web (`web/engine.py`) đóng vai trò nối các khối. Xem README mục 9 cho huấn luyện (LSTM).
 
 ---
 
