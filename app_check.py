@@ -12,7 +12,7 @@ cho nhiều model cùng lúc (cùng một chuỗi pose), rồi so với bộ tes
      trên testset (test_tool.py) — hai bên phải khớp nhau.
   3. TỐC ĐỘ: FPS cả pipeline, thời gian pose và thời gian phân loại mỗi lần dự đoán.
 
-Chạy (mặc định: configs/v1.yaml, B1 = models/b1_lstm.pt, B2 = models/shiftgcn_best.pt, 12 video của
+Chạy (mặc định: configs/v1.yaml, B0, B1 = models/b1_lstm.pt, B2 = models/shiftgcn_best.pt, 12 video của
 subject test lấy đều từ data/videos_new):
     python app_check.py
     python app_check.py --limit 0                       # mọi video của subject test (chậm)
@@ -141,7 +141,7 @@ def main(argv=None):
                                  formatter_class=argparse.RawDescriptionHelpFormatter, epilog=__doc__)
     ap.add_argument("--config", default="configs/v1.yaml")
     ap.add_argument("--model", action="append", default=[], metavar="TÊN=ĐƯỜNG_DẪN",
-                    help="mặc định B1=models/b1_lstm.pt, B2=models/shiftgcn_best.pt")
+                    help="mặc định B0=models/b0_rule_v1.json, B1=models/b1_lstm.pt, B2=models/shiftgcn_best.pt")
     ap.add_argument("--videos", nargs="*", default=None, help="video cụ thể (mặc định: subject test)")
     ap.add_argument("--video-root", default="data/videos_new")
     ap.add_argument("--testset", default="data/testsets/v1_test")
@@ -155,7 +155,8 @@ def main(argv=None):
     from src.testset import load_testset
 
     cfg = load_config(resolve(args.config), args.set)
-    specs = dict(m.split("=", 1) for m in args.model) or {"B1": "models/b1_lstm.pt", "B2": "models/shiftgcn_best.pt"}
+    specs = dict(m.split("=", 1) for m in args.model) or {"B0": "models/b0_rule_v1.json", "B1": "models/b1_lstm.pt",
+                                                     "B2": "models/shiftgcn_best.pt"}
     c = cfg["classifier"]
     clfs = {k: FallClassifier(resolve(p), stride_frames=c.get("stride_frames", 1), device=c.get("device"),
                               fall_threshold=c.get("threshold"), speed_gate=c.get("speed_gate"), verbose=False)
@@ -171,7 +172,7 @@ def main(argv=None):
     offline = {}
     for k, clf in clfs.items():
         p = clf.predict_batch(ts["X"]) if W[k] == ts["X"].shape[1] else None
-        offline[k] = p
+        offline[k] = None if p is None else (p, clf.gate_labels(ts["X"], p)[0])
 
     print(f"Cấu hình {args.config} | pose {cfg['pose']['model_path']} imgsz {cfg['pose'].get('imgsz')} | "
           f"model {', '.join(f'{k}={clfs[k].name} (ngưỡng {clfs[k].fall_threshold:.2f})' for k in clfs)}")
@@ -200,8 +201,8 @@ def main(argv=None):
             row[f"{k}_app_pred"] = int(any(x["label"] for x in res))
             row[f"{k}_clf_ms"] = round(r["clf_ms"][k], 2) if r["clf_ms"][k] else None
             if in_test and offline[k] is not None:
-                row[f"{k}_test_max_p"] = round(float(offline[k][m].max()), 4)
-                row[f"{k}_test_pred"] = int((offline[k][m] >= clfs[k].fall_threshold).any())
+                row[f"{k}_test_max_p"] = round(float(offline[k][0][m].max()), 4)
+                row[f"{k}_test_pred"] = int(offline[k][1][m].any())
         rows.append(row)
         print(f"[{i}/{len(videos)}] {v.name:32s} nhãn={'NGÃ' if label else 'ADL':3s} khung={r['frames']:3d} "
               f"lệch skeleton={row.get('skeleton_diff', '-')} | " +

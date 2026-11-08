@@ -52,7 +52,7 @@ check:                           # tham số kiểm tra CSV cho xử lý chuỗi
   max_missing: 0.4
 
 classifier:                      # bộ phân loại ngã (src/classifier.py) — ST-GCN, LSTM... chọn theo "arch" trong checkpoint
-  checkpoint: auto               # auto = models/best_lstm.pt nếu có, không thì models/best_stgcn.pt
+  checkpoint: models/b1_lstm.pt   # hoặc models/shiftgcn_best.pt, models/b0_rule_v1.json
                                  # hoặc đường dẫn cụ thể; null = tắt. Đổi được ngay trên web (ô "Model").
   threshold: null                # P(ngã) >= threshold -> NGÃ; null = ngưỡng chọn trên val lưu trong checkpoint (không có thì 0.5)
   stride_frames: 5               # dự đoán lại sau mỗi N khung

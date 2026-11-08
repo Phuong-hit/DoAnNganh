@@ -62,23 +62,12 @@ check:                           # tham số kiểm tra CSV cho xử lý chuỗi
   max_missing: 0.4
 
 classifier:                      # bộ phân loại ngã (src/classifier.py) — ST-GCN, LSTM... chọn theo "arch" trong checkpoint
-  checkpoint: models/lstm_v6.pt  # + cổng tốc độ bên dưới: bắt đủ 4/4 video ngã của nhóm, chỉ 1/5 ADL báo nhầm
-                                 # (models/stgcn_v6.pt: test F1 cao hơn nhưng trên video nhóm báo nhầm nằm nhanh xuống giường)
-                                 # auto = models/best_lstm.pt nếu có, không thì models/best_stgcn.pt
-                                 # hoặc đường dẫn cụ thể; null = tắt. Đổi được ngay trên web (ô "Model").
+  checkpoint: models/b1_lstm.pt  # hoặc models/shiftgcn_best.pt, models/b0_rule_v1.json; null = tắt. Đổi được trên web (ô "Model").
   threshold: null                # P(ngã) >= threshold -> NGÃ; null = ngưỡng chọn trên val lưu trong checkpoint (không có thì 0.5)
   stride_frames: 5               # dự đoán lại sau mỗi N khung
   window_size: null              # null = lấy từ checkpoint (mặc định 20 khung = 2 s @ 10 fps)
   device: null                   # null = cuda nếu có, không thì cpu
-  speed_gate: {enabled: true, shoulder_drop: 3.0, rotation: 100, keep_if_p_above: null}
-                                 # chọn cho lstm_v6 trên 9 video nhóm + val/test v6: chặn nằm nhanh xuống giường
-                                 # (sub1_01 vai ≤1.3, xoay ≤54) nhưng giữ ngã xuống giường (sub4_17 xoay 115).
-                                 # Đổi lại test v6 sót 4/184 cú ngã (không cổng: 1), báo nhầm 1/193 (không cổng: 6).
-                                 # cổng tốc độ (src/motion.py): chỉ xác nhận NGÃ khi chuyển động đủ nhanh,
-                                 # để nằm xuống / leo lên giường / ngả lưng chậm không bị báo ngã.
-                                 # null = dùng giá trị lưu trong checkpoint (calibrate_gate.py --save), không có thì tắt.
-                                 # Bật/tắt và chỉnh ngay trên web (ô "Cổng tốc độ"). Ví dụ đặt tay:
-                                 # speed_gate: {enabled: true, shoulder_drop: 2.5, rotation: 200, keep_if_p_above: 0.95}
+  speed_gate: null               # null = cổng tốc độ lưu trong checkpoint, không có thì tắt (bật/tắt trên web, ô "Cổng tốc độ")
 
 dataset:                         # run_web.py build-dataset / nút "Tạo dataset" -> output/<cấu hình>/dataset/windows.npz
   win_sec: 2.0                   # độ dài cửa sổ (2 s @ 10 fps = 20 khung, khớp classifier.window_size)

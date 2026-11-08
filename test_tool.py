@@ -131,10 +131,14 @@ class NeuralAdapter:
     def run(self, X):
         prob = np.concatenate([self.clf.predict_batch(X[i:i + 512]) for i in range(0, len(X), 512)])
         prob = prob.astype(np.float64)
+        if self.clf.gate.enabled:                     # B1 có cổng tốc độ lưu trong checkpoint: tính đúng như App
+            return self.clf.gate_labels(X, prob)[0], prob
         return (prob >= self.threshold).astype(np.int64), prob
 
     def predict_one(self, X1):
-        self.clf.predict_batch(X1)
+        prob = self.clf.predict_batch(X1)
+        if self.clf.gate.enabled:
+            self.clf.gate_labels(X1, prob)
 
 
 def load_model(role, path, device):

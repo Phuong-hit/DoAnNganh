@@ -79,7 +79,7 @@ def build_drawer(cfg: dict) -> SkeletonDraw:
 
 
 # Thứ tự ưu tiên khi classifier.checkpoint = auto: model cuối (train.py --final) trước, LSTM trước ST-GCN.
-AUTO_CHECKPOINTS = ("models/lstm.pt", "models/stgcn.pt", "models/best_lstm.pt", "models/best_stgcn.pt")
+AUTO_CHECKPOINTS = ("models/b1_lstm.pt", "models/shiftgcn_best.pt")
 
 
 def list_checkpoints(cfg: dict | None = None) -> list[str]:
@@ -87,13 +87,13 @@ def list_checkpoints(cfg: dict | None = None) -> list[str]:
     d = resolve("models")
     if not d.is_dir():
         return []
-    return sorted(f"models/{p.name}" for p in d.glob("*.pt")
+    return sorted(f"models/{p.name}" for p in [*d.glob("*.pt"), *d.glob("b0_*.json")]
                   if "yolo" not in p.name.lower() and "pose" not in p.name.lower())
 
 
 def classifier_path(cfg: dict) -> Path | None:
     """Đường dẫn checkpoint của bộ phân loại ngã, None nếu chưa cấu hình / không tìm thấy.
-    "auto": models/best_lstm.pt nếu có, không thì models/best_stgcn.pt."""
+    "auto": models/b1_lstm.pt nếu có, không thì models/shiftgcn_best.pt."""
     ck = (cfg.get("classifier") or {}).get("checkpoint")
     if not ck:
         return None

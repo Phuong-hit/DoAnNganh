@@ -214,7 +214,7 @@ pip install torch && pip install -r requirements.txt
 python -m unittest discover tests                                    # không còn test nào bị bỏ qua
 python train.py --arch lstm  --final                                 # -> models/lstm.pt  (model cuối)
 python train.py --arch stgcn --final                                 # -> models/stgcn.pt (model cuối)
-python evaluate.py models/stgcn.pt models/lstm.pt --data data/dataset_clean_all.npz --html output/compare.html
+python test_tool.py   # B0/B1/B2 trên bộ test chung (mục 11 README)
 python run_web.py --config configs/code1.yaml                        # web tự dùng models/lstm.pt
 ```
 
@@ -246,16 +246,18 @@ quy ước nhãn (0 = ADL, 1 = Fall), định dạng và mã băm nội dung; `l
 | Vai trò | Model | File |
 |---|---|---|
 | B0 | Luật (Phúc), tham số dò trên train của datasetv1 | `models/b0_rule_v1.json` (`tune_b0.py --data data/datasetv1.npz --name b0_rule_v1`) |
-| B1 | LSTM nhỏ (embed 64, hidden 64, 1 lớp), chọn bằng `tune_b1.py` | `models/b1_lstm.pt` |
+| B1 | LSTM (dropout 0.5) train trên `data/datasetv1_lying.npz` (`build_lying_negatives.py`: thêm mẫu nằm yên / nằm xuống chậm), cổng tốc độ vai 1.6 thân/s, xoay 70 độ/s lưu trong checkpoint | `models/b1_lstm.pt` |
 | B2 | Shift-GCN (`src/model_shiftgcn.py`, arch `shiftgcn`) | `models/shiftgcn_best.pt` |
 
 ```bash
 python test_tool.py --make-testset v1_test --data data/datasetv1.npz --split test   # tạo bộ test (một lần)
 python test_tool.py                                   # B0/B1/B2 trên bộ test chung -> output/test_runs/<thời gian>/
 python test_tool.py --extra stgcn=models/x.pt         # thêm model để so sánh
-python tune_b1.py                                     # tinh chỉnh B1: 8 cấu hình x 3 seed, chọn theo val
+python build_lying_negatives.py                       # tạo data/datasetv1_lying.npz
+python tune_b1.py --data data/datasetv1_lying.npz     # tinh chỉnh B1, chọn theo val
+python test_tool.py --testset data/testsets/v1_lying  # bộ test có thêm tình huống nằm mà không ngã
 python app_check.py                                   # chạy video thật qua pipeline App, so với bộ test
-python run_web.py --config configs/v1.yaml            # web với pose giống lúc trích datasetv1 + B2
+python run_web.py --config configs/v1.yaml            # web với pose giống lúc trích datasetv1 + B1
 ```
 
 Test Tool ghi `report.md` (bảng P/R/F1 theo cửa sổ và theo video, thời gian xử lý, phân tích báo nhầm / bỏ sót

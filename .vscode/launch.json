@@ -16,10 +16,9 @@
       "cwd": "${workspaceFolder}", "console": "integratedTerminal", "justMyCode": true
     },
     {
-      "name": "★ So sánh LSTM vs ST-GCN (báo cáo HTML)",
-      "type": "debugpy", "request": "launch", "program": "${workspaceFolder}/evaluate.py",
-      "args": ["models/stgcn.pt", "models/lstm.pt", "--data", "data/dataset_clean_all.npz",
-               "--device", "cpu", "--html", "output/compare.html"],
+      "name": "★ Test Tool B0/B1/B2 (bộ test chung)",
+      "type": "debugpy", "request": "launch", "program": "${workspaceFolder}/test_tool.py",
+      "args": [],
       "cwd": "${workspaceFolder}", "console": "integratedTerminal", "justMyCode": true
     },
     {

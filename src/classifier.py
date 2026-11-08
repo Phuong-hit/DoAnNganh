@@ -26,6 +26,7 @@ Lưu bằng save_checkpoint(..., arch="lstm").
 from __future__ import annotations
 
 import importlib
+import json
 from collections import deque
 from pathlib import Path
 
@@ -41,7 +42,7 @@ LABEL_NAMES = {0: "KHÔNG NGÃ", 1: "NGÃ"}
 MODEL_REGISTRY: dict[str, type] = {}
 
 # Module chứa model, được import khi cần để tự đăng ký. Thiếu file thì bỏ qua (model_lstm: B1).
-_BUILTIN_MODULES = ("model_stgcn", "model_lstm", "model_shiftgcn")
+_BUILTIN_MODULES = ("model_stgcn", "model_lstm", "model_adapters")
 
 
 def register_model(name: str):
@@ -92,6 +93,10 @@ def load_checkpoint(path, device="cpu") -> dict:
     path = Path(path)
     if not path.is_file():
         raise FileNotFoundError(f"Không tìm thấy trọng số: {path}")
+    if path.suffix.lower() == ".json":              # luật B0: file JSON tham số, không có trọng số
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        return dict(arch="b0_rule", state={}, model_kwargs=dict(params=payload.get("params", payload)),
+                    window_size=int(payload.get("window_size", 17)), fps=10.0, threshold=0.5)
     try:
         return torch.load(path, map_location=device, weights_only=True)
     except TypeError:                               # torch cũ không có weights_only

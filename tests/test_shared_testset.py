@@ -133,6 +133,35 @@ class NeuralTest(unittest.TestCase):
         np.testing.assert_allclose(clf.predict_batch(X), want, atol=1e-5)
         self.assertIsInstance(build_model("shiftgcn", num_frames=W), torch.nn.Module)
 
+    def test_b0_json_runs_in_fallclassifier(self):
+        """models/b0_*.json chạy qua FallClassifier (web) và quyết định đúng như luật B0."""
+        from src.b0_rule import B0Rule
+        from src.classifier import FallClassifier
+        path = self.tmp / "b0_rule_x.json"
+        path.write_text(json.dumps({"params": {"angle_th": 50.0}}), encoding="utf-8")
+        clf = FallClassifier(path, device="cpu", verbose=False)
+        self.assertEqual((clf.arch, clf.window_size, clf.fall_threshold), ("b0_rule", W, 0.5))
+        with np.load(fake_dataset(self.tmp / "ds.npz")) as z:
+            X = z["X_test"]
+        want = B0Rule.from_params({"angle_th": 50.0}).predict(X)
+        np.testing.assert_array_equal((clf.predict_batch(X) >= 0.5).astype(int), want)
+
+    def test_lying_negatives(self):
+        """Mẫu tạo thêm có nhãn 0, vẫn thuộc subject gốc, tốc độ thấp hơn cú ngã; test gốc giữ nguyên trong file ra."""
+        import build_lying_negatives as L
+        from src.motion import motion_features
+        rng = np.random.default_rng(0)
+        with np.load(fake_dataset(self.tmp / "ds.npz")) as z:
+            X, y, v = z["X_train"], z["y_train"], z["video_train"]
+        Xn, yn, vn, _ = L.augment_split(X, y, v, rng, 0.5, 0.0)
+        extra = Xn[len(y):]
+        self.assertGreater(len(extra), 0)
+        self.assertTrue((yn[len(y):] == 0).all())
+        np.testing.assert_array_equal(Xn[:len(y)], X)
+        self.assertEqual({s.split("_")[0] for s in vn[len(y):]} - {s.split("_")[0] for s in v}, set())
+        f = motion_features(extra, 10.0)
+        self.assertLess(float(np.percentile(f["shoulder_drop"], 95)), 2.0)
+
     def test_window_mismatch_is_reported(self):
         import test_tool
         from src.classifier import build_model, save_checkpoint

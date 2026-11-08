@@ -4,8 +4,9 @@
 #     python run_web.py --config configs/v1.yaml
 #     python main.py --config configs/v1.yaml --source video.mp4
 # Model (đổi ngay trên web, ô "Model"):
-#     models/shiftgcn_best.pt  B2 Shift-GCN  (mặc định)
-#     models/b1_lstm.pt        B1 LSTM đã tinh chỉnh (tune_b1.py)
+#     models/b1_lstm.pt        B1 LSTM (mặc định; đã thêm mẫu nằm + cổng tốc độ)
+#     models/shiftgcn_best.pt  B2 Shift-GCN (giữ nguyên bản của nhóm)
+#     models/b0_rule_v1.json   B0 luật
 # Lần chạy đầu ultralytics tự tải models/yolo26m-pose.pt.
 
 paths:
@@ -62,12 +63,12 @@ check:                           # tham số kiểm tra CSV cho xử lý chuỗi
   max_missing: 0.4
 
 classifier:                      # bộ phân loại ngã (src/classifier.py) — chọn kiến trúc theo checkpoint
-  checkpoint: models/shiftgcn_best.pt   # B2 Shift-GCN (17 khung); B1: models/b1_lstm.pt
+  checkpoint: models/b1_lstm.pt   # B1 đã thêm mẫu nằm + cổng tốc độ; hoặc models/shiftgcn_best.pt, models/b0_rule_v1.json
   threshold: null                # null = ngưỡng trong checkpoint (Shift-GCN: 0.5; B1: chọn trên val)
   stride_frames: 1               # dự đoán mỗi khung, giống stride 1 khung lúc tạo datasetv1
   window_size: null              # null = lấy từ checkpoint (17 khung = 1.7 s @ 10 fps)
   device: null
-  speed_gate: {enabled: false}   # cổng tốc độ chỉnh cho lstm_v6; model v1 chưa hiệu chỉnh -> tắt
+  speed_gate: null               # theo từng checkpoint: Shift-GCN và B0 không có cổng; B1 dùng giá trị lưu trong checkpoint nếu có
 
 dataset:                         # run_web.py build-dataset / nút "Tạo dataset" -> output/<cấu hình>/dataset/windows.npz
   win_sec: 1.7                   # 17 khung @ 10 fps, khớp model v1

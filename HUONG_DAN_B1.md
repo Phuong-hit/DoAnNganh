@@ -19,7 +19,7 @@ Chỉ có **2 model cuối**, mỗi model **một lệnh**:
 ```bash
 python train.py --arch lstm  --final      # -> models/lstm.pt
 python train.py --arch stgcn --final      # -> models/stgcn.pt
-python evaluate.py models/stgcn.pt models/lstm.pt --data data/dataset_clean_all.npz --html output/compare.html
+python test_tool.py   # B0/B1/B2 trên bộ test chung (mục 11 README)
 ```
 
 `--final` tự làm: dùng dataset đã sửa nhãn (`data/dataset_clean.npz`) → train có val để biết số epoch tốt nhất →

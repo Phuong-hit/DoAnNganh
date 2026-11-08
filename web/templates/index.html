@@ -334,13 +334,11 @@ async function setGate() {
 function fillModelSelect() {
   const sel = $("clfSel");
   const cur = CLF.path || "";
-  const opts = [["auto", "tự chọn (LSTM nếu có)"], ...CLF.available.map(a => [a, a.replace(/^models\//, "")]), ["", "tắt"]];
+  const opts = [...CLF.available.map(a => [a, a.replace(/^models\//, "")]), ["", "tắt"]];
   sel.innerHTML = opts.map(([v, t]) => `<option value="${esc(v)}">${esc(t)}</option>`).join("");
-  // hiện đúng mục đã chọn: tên file, "tự chọn" hoặc "tắt"
-  const want = CLF.selected ?? (CLF.available.includes(cur) ? cur : (CLF.name ? "auto" : ""));
-  sel.value = want === "auto" || want === "" || CLF.available.includes(want) ? want : "auto";
-  const autoOpt = sel.querySelector('option[value="auto"]');
-  if (autoOpt && want === "auto" && CLF.path) autoOpt.textContent = `tự chọn → ${CLF.path.replace(/^models\//, "")}`;
+  // hiện đúng mục đã chọn: tên file hoặc "tắt"
+  const want = CLF.selected === "auto" ? cur : (CLF.selected ?? cur);
+  sel.value = CLF.available.includes(want) ? want : "";
   $("hdrClf").textContent = CLF.name ? `${CLF.name} (${(CLF.params || 0).toLocaleString()} tham số)` : "tắt";
   $("useClf").disabled = !CLF.name;
   if (CLF.name && !$("useClf").dataset.touched) $("useClf").checked = true;

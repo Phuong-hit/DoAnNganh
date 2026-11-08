@@ -245,29 +245,6 @@ class Model(nn.Module):
         return self.fc(x)
 
 
-# ----------------------------------------------------------------------
-# Đăng ký vào src/classifier.py (FallClassifier, evaluate.py, test_tool.py, web dùng chung)
-# ----------------------------------------------------------------------
-def _register():
-    try:
-        from .classifier import register_model
-    except ImportError:                       # chạy trực tiếp: python src/model_shiftgcn.py
-        return
-
-    @register_model("shiftgcn")
-    class ShiftGCNClassifier(Model):
-        """Cùng hợp đồng với ST-GCN / LSTM: build_model("shiftgcn", in_channels=3, num_classes=2,
-        num_point=17, num_frames=17, ...) -> [N, C, T, V] -> logits [N, 2].
-        Tên tham số trong state_dict giữ nguyên Model, nên nạp thẳng được shiftgcn_best.pt."""
-
-        def __init__(self, in_channels=3, num_classes=2, num_point=17, num_frames=17, **kwargs):
-            super().__init__(num_class=num_classes, num_point=num_point, in_channels=in_channels,
-                             num_frames=num_frames, **kwargs)
-
-
-_register()
-
-
 def count_parameters(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 

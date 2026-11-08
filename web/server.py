@@ -69,7 +69,7 @@ def create_app(cfg: dict, check_model: bool = True) -> Flask:
         new = {"obj": None, "error": None, "name": None, "path": None}
         if path is None:
             ck = cfg["classifier"].get("checkpoint")
-            new["error"] = ("chưa có checkpoint trong models/ (best_lstm.pt / best_stgcn.pt)"
+            new["error"] = ("chưa có checkpoint trong models/ (b1_lstm.pt / shiftgcn_best.pt)"
                             if str(ck).lower() == "auto" else "chưa chọn model (classifier.checkpoint)")
         else:
             try:
@@ -394,9 +394,7 @@ def create_app(cfg: dict, check_model: bool = True) -> Flask:
         import importlib.util
         from .compare import list_datasets
         cks = list_checkpoints(cfg)
-        pref = [c for c in ("models/stgcn.pt", "models/lstm.pt") if c in cks]
-        if len(pref) < 2:
-            pref = [c for c in ("models/best_stgcn.pt", "models/best_lstm.pt") if c in cks]
+        pref = [c for c in ("models/shiftgcn_best.pt", "models/b1_lstm.pt") if c in cks]
         default = pref if len(pref) >= 2 else cks[:2]
         has_torch = importlib.util.find_spec("torch") is not None
         from src.motion import SpeedGate
