@@ -4,20 +4,20 @@ model_shiftgcn.py
 Shift-GCN (Cheng và cộng sự, CVPR 2020) viết lại bằng PyTorch THUẦN để chạy được
 trên máy bình thường (CPU hoặc GPU), cho dữ liệu của dự án:
 
-    đầu vào  x : [N, C, T, V]  = [batch, 3 kênh (x, y, mask), 10 khung, 17 khớp]
+    đầu vào  x : [N, C, T, V]  
     đầu ra     : [N, num_class] (logits; 0 = không ngã, 1 = ngã)
 
 Khác bản gốc (kchengiva/Shift-GCN):
   * Không dùng nhân CUDA `cuda.shift`. Phép dịch theo THỜI GIAN viết bằng
     index_select với chỉ số cố định (loại "naive": độ dịch cố định cho từng kênh).
   * Không có `.cuda()` cứng, không cần đồ thị (bản non-local không dùng ma trận kề).
-  * Số khớp là tham số (17), không còn số 25 cứng; không có chiều "người" M.
+  * Số khớp là tham số (17).
   * Mạng nhỏ mặc định (4 khối) vì dữ liệu ít.
   * Không còn np.int và các hàm init cũ.
 
 Dùng:
     from src.model_shiftgcn import Model
-    model = Model(num_class=2, num_point=17, num_frames=10)
+    model = Model(num_class=2, num_point=17, num_frames=17)
     logits = model(x)                      # x: [N, 3, 10, 17]
 
 Chạy thử:  python model_shiftgcn.py
