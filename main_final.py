@@ -35,7 +35,7 @@ from src.shiftgcn_inference import ShiftGCNInference
 ROOT = Path(__file__).resolve().parent
 
 POSE_MODEL_PATH = ROOT / "model_yolo" / "yolo11n_pose_f11_best_v5.pt"
-CHECKPOINT_PATH = ROOT / "model_classify" / "shiftgcn_bestv5.pt"
+CHECKPOINT_PATH = ROOT / "model_classify" / "shiftgcn_best_4_20_11.pt"
 
 POSE_CONF = 0.25
 

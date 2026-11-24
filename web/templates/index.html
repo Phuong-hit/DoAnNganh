@@ -110,6 +110,7 @@
 <header>
   <h1>Fall Web</h1>
   <a href="/compare" style="font-size:13px;font-weight:600">So sánh model →</a>
+  <a href="/monitor" style="font-size:13px;font-weight:600">Giám sát &amp; cảnh báo ngã →</a>
   <span>Pose: <b>{{ pose_tag }}</b> ({{ backend }}) · conf {{ conf }}</span>
   <span>Lấy mẫu: {{ target_fps or "native" }} fps · SkeletonFilter khi trích: <b>{{ "bật" if filter_on else "tắt" }}</b></span>
   <span>CSV lưu tại <code>{{ out_dir }}</code></span>
@@ -334,7 +335,8 @@ async function setGate() {
 function fillModelSelect() {
   const sel = $("clfSel");
   const cur = CLF.path || "";
-  const opts = [...CLF.available.map(a => [a, a.replace(/^models\//, "")]), ["", "tắt"]];
+  const labels = CLF.labels || {};
+  const opts = [...CLF.available.map(a => [a, labels[a] || a.replace(/^models\//, "")]), ["", "Không dùng model"]];
   sel.innerHTML = opts.map(([v, t]) => `<option value="${esc(v)}">${esc(t)}</option>`).join("");
   // hiện đúng mục đã chọn: tên file hoặc "tắt"
   const want = CLF.selected === "auto" ? cur : (CLF.selected ?? cur);

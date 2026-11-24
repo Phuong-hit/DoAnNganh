@@ -11,22 +11,22 @@ source:
 
 pose:
   backend: yolo                  # yolo (YoloBackend của src/pose_estimate.py) | dummy (pose giả để test, không cần model)
-  model_path: models/yolov8n-pose.pt
-  conf: 0.4                      # ngưỡng phát hiện người (CONF trong HUONG_DAN)
+  model_path: model_yolo/yolo11n_pose_f11_best_v5.pt   # giống main.py nhánh final (có thêm bản v6: model_yolo/yolo11n_pose_f11_best_v6.pt)
+  conf: 0.25                     # ngưỡng phát hiện người (nhánh final: 0.25; trước đây 0.4)
   device: null                   # null = để ultralytics tự chọn | cpu | cuda:0
-  kp_conf: 0.35                  # PoseEstimate: ngưỡng khớp tin cậy
+  kp_conf: 0.25                  # PoseEstimate: ngưỡng khớp tin cậy (nhánh final: 0.25; trước đây 0.35)
   min_valid_joints: 5            # PoseEstimate: ít hơn -> valid = False
   track_iou: 0.1
   lost_reset_frames: 30
   iou: 0.5                       # NMS IoU của YOLO
   use_tracker: true              # true: model.track() + ByteTrack giữ track_id qua khung | false: predict()
   tracker: bytetrack.yaml        # hoặc botsort.yaml
-  imgsz: null                    # null = 640 mặc định; 320 để gần cấu hình MaixCAM
+  imgsz: [224, 320]              # nhánh final: (cao 224, rộng 320) | null = 640 mặc định
 
 filter:
   enabled: true                  # USE_FILTER: chạy SkeletonFilter trước khi ghi CSV / vẽ
   alpha: 0.5                     # (giữ cho tương thích; làm mượt giờ dùng One Euro bên dưới)
-  min_conf: 0.35
+  min_conf: 0.25                 # nhánh final: SkeletonFilter(min_conf=0.25); trước đây 0.35
   max_hold_frames: 5
   history_size: 3
   jump_ratio: 0.65
@@ -52,8 +52,8 @@ check:                           # tham số kiểm tra CSV cho xử lý chuỗi
   max_missing: 0.4
 
 classifier:                      # bộ phân loại ngã (src/classifier.py) — ST-GCN, LSTM... chọn theo "arch" trong checkpoint
-  checkpoint: models/b1_lstm.pt   # hoặc models/shiftgcn_best.pt, models/b0_rule_v1.json
-                                 # hoặc đường dẫn cụ thể; null = tắt. Đổi được ngay trên web (ô "Model").
+  checkpoint: model_classify/shiftgcn_best_4_20_11.pt   # model mở web lên là dùng; null = không dùng model.
+                                 # Đổi được ngay trên web (ô "Model"), chỉ chọn được các model trong "choices" dưới đây.
   threshold: null                # P(ngã) >= threshold -> NGÃ; null = ngưỡng chọn trên val lưu trong checkpoint (không có thì 0.5)
   stride_frames: 5               # dự đoán lại sau mỗi N khung
   window_size: null              # null = lấy từ checkpoint (mặc định 20 khung = 2 s @ 10 fps)
@@ -63,9 +63,40 @@ classifier:                      # bộ phân loại ngã (src/classifier.py) �
                                  # null = dùng giá trị lưu trong checkpoint (calibrate_gate.py --save), không có thì tắt.
                                  # Bật/tắt và chỉnh ngay trên web (ô "Cổng tốc độ"). Ví dụ đặt tay:
                                  # speed_gate: {enabled: true, shoulder_drop: 2.5, rotation: 200, keep_if_p_above: 0.95}
+  choices:                       # CHỈ các model này hiện trên web (+ mục "Không dùng model"). Xóa cả mục = hiện mọi file.
+                                 # Mỗi model ghi đè được threshold / stride_frames / postprocess / speed_gate ở trên.
+    model_classify/shiftgcn_best_4_20_11.pt:
+      label: ShiftGCN (nhánh final)
+      threshold: 0.8             # FALL_THRESHOLD của nhánh final
+      stride_frames: 1           # nhánh final dự đoán mỗi khung
+      postprocess:               # thuật toán hậu xử lý của nhánh final (src/fall_postprocess.py); bật thì bỏ qua speed_gate
+        enabled: true
+        consec_frames: 1         # CONSEC_FRAMES: số khung liên tiếp P >= threshold để báo NGÃ
+        hold_frames: 10          # HOLD_FRAMES: giữ cảnh báo, chỉ nhả khi người đã đứng thẳng (thân + chân)
+        min_valid_ratio: 0.5     # MIN_VALID_RATIO: cửa sổ có < 50% khung thấy người thì giữ P cũ, không dự đoán
+        reset_empty_frames: 5    # mất người >= 5 khung liên tiếp -> xóa cửa sổ + trạng thái cảnh báo
+    models/b1_lstm.pt:
+      label: B1 LSTM             # giữ tham số cũ: ngưỡng lưu trong checkpoint, dự đoán mỗi 5 khung
 
 dataset:                         # run_web.py build-dataset / nút "Tạo dataset" -> output/<cấu hình>/dataset/windows.npz
   win_sec: 2.0                   # độ dài cửa sổ (2 s @ 10 fps = 20 khung, khớp classifier.window_size)
   stride_sec: 0.5
   min_overlap: 0.3               # cửa sổ chồng >= 30% đoạn [fall_start_s, fall_end_s] -> nhãn NGÃ
   min_valid_ratio: 0.0           # bỏ cửa sổ có tỉ lệ khung có người thấp hơn (0 = giữ hết)
+
+monitor:                         # trang /monitor — giám sát nền, chạy kể cả khi không ai mở web
+  source: null                   # maix://192.168.1.50 (MaixCAM chạy maixcam_app, pose trên NPU)
+                                 # | rtsp://<IP>:8554/live (MaixCAM chỉ phát RTSP, PC chạy YOLO) | 0 (webcam PC)
+  autostart: false               # true: mở server là giám sát luôn (cần source). Hoặc: python run_web.py --monitor maix://<IP>
+  checkpoint: null               # null = dùng classifier.checkpoint ở trên
+
+events:                          # lưu lại khoảnh khắc ngã để xem lại
+  dir: output/fall_events        # chỉ giữ max_events event gần nhất
+  saved_dir: output/fall_events_saved   # nút "Lưu vĩnh viễn" chuyển event sang đây (không bị xóa vòng)
+  max_events: 5
+  pre_s: 6                       # giây TRƯỚC cảnh báo (model báo trễ ~1-3 s so với lúc ngã thật)
+  post_s: 5                      # giây SAU cảnh báo; cảnh báo mới trong lúc ghi -> kéo dài clip
+  max_clip_s: 30                 # clip dài nhất
+  cooldown_s: 20                 # sau một event, cảnh báo trong N giây không tạo event mới
+  frame_width: 480               # thu nhỏ ảnh lưu (px) cho nhẹ đĩa
+  jpeg_quality: 75

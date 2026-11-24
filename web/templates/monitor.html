@@ -1,0 +1,614 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Giám sát ngã</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --text: #1d2330; --muted: #657085; --line: #dde2ea;
+    --accent: #1f6feb; --accent-text: #ffffff; --ok: #1a7f37; --warn: #b35900; --bad: #c62828;
+    --win: rgba(31, 111, 235, .13); --alt: #8250df;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12151b; --panel: #1b2029; --text: #e6e9ef; --muted: #98a2b3; --line: #2c3340;
+      --accent: #4c8dff; --accent-text: #0d1117; --ok: #4ac26b; --warn: #e3a248; --bad: #ff6b6b;
+      --win: rgba(76, 141, 255, .18); --alt: #c297ff;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 14px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  header { padding: 14px 20px; border-bottom: 1px solid var(--line); background: var(--panel);
+           display: flex; flex-wrap: wrap; gap: 8px 24px; align-items: baseline; }
+  header h1 { font-size: 17px; margin: 0; }
+  header span { color: var(--muted); font-size: 13px; }
+  a { color: var(--accent); }
+  main { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 16px; padding: 16px 20px; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; padding: 12px 16px; } }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px; min-width: 0; }
+  section.full { grid-column: 1 / -1; }
+  h2 { font-size: 14px; margin: 0 0 10px; display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+  h2 small { color: var(--muted); font-weight: 400; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 10px; }
+  input[type=text] { flex: 1 1 200px; min-width: 0; padding: 7px 9px; border: 1px solid var(--line);
+                     border-radius: 6px; background: var(--bg); color: var(--text); }
+  select { padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg);
+           color: var(--text); max-width: 100%; }
+  button { padding: 7px 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg);
+           color: var(--text); cursor: pointer; font: inherit; }
+  button:disabled { opacity: .5; cursor: default; }
+  button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+  button.good { border-color: var(--ok); color: var(--ok); } button.good.on { background: var(--ok); color: #fff; }
+  button.badb { border-color: var(--bad); color: var(--bad); } button.badb.on { background: var(--bad); color: #fff; }
+  button.small { padding: 2px 8px; font-size: 12px; }
+  .switch { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; font-size: 13px; }
+  .muted { color: var(--muted); } .note { font-size: 12px; color: var(--muted); margin-top: 6px; }
+  .bad { color: var(--bad); } .good-t { color: var(--ok); } .warn { color: var(--warn); }
+  .dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; margin-right: 6px; background: var(--muted); }
+  .dot.live { background: var(--ok); } .dot.wait { background: var(--warn); } .dot.err { background: var(--bad); }
+  .viewer { background: #000; border-radius: 6px; aspect-ratio: 4 / 3; display: grid; place-items: center; overflow: hidden; }
+  .viewer img { width: 100%; height: 100%; object-fit: contain; }
+  .viewer .ph { color: #8b93a3; font-size: 13px; padding: 12px; text-align: center; }
+  .stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); gap: 8px; margin-top: 10px; }
+  .stat { border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; min-width: 0; }
+  .stat b { display: block; font-size: 16px; font-variant-numeric: tabular-nums; }
+  .stat small { color: var(--muted); }
+  /* trạng thái ngã */
+  .fallpanel { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 14px; align-items: center;
+               border: 2px solid var(--line); border-radius: 8px; padding: 10px 12px; margin: 10px 0 0; background: var(--bg); }
+  .fallpanel.st-fall { border-color: var(--bad); background: color-mix(in srgb, var(--bad) 12%, var(--bg)); }
+  .fallpanel.st-ok { border-color: var(--ok); }
+  .fall-state { font-size: 24px; font-weight: 800; color: var(--muted); line-height: 1.2; }
+  .st-ok .fall-state { color: var(--ok); } .st-fall .fall-state { color: var(--bad); }
+  .fall-pct { font-size: 24px; font-weight: 800; font-variant-numeric: tabular-nums; }
+  .st-fall .fall-pct { color: var(--bad); } .st-ok .fall-pct { color: var(--ok); }
+  .fallpanel canvas { grid-column: 1 / -1; width: 100%; height: 56px; display: block; }
+  /* chuông */
+  .alarm { display: none; position: sticky; top: 0; z-index: 5; background: var(--bad); color: #fff;
+           padding: 10px 20px; font-weight: 700; gap: 10px 16px; align-items: center; flex-wrap: wrap; }
+  .alarm.show { display: flex; }
+  .alarm button { background: #fff; color: var(--bad); border-color: #fff; font-weight: 600; }
+  @media (prefers-reduced-motion: no-preference) { .alarm.show { animation: pulse 1s ease-in-out infinite; } }
+  @keyframes pulse { 50% { background: color-mix(in srgb, var(--bad) 75%, #000); } }
+  /* danh sách event */
+  .evlist { display: grid; gap: 8px; }
+  .ev { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 10px; padding: 8px; border: 1px solid var(--line);
+        border-radius: 8px; cursor: pointer; background: var(--bg); text-align: left; width: 100%; }
+  .ev:hover { border-color: var(--accent); }
+  .ev.sel { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+  .ev img { width: 96px; height: 72px; object-fit: cover; border-radius: 4px; background: #000; display: block; }
+  .ev .t { font-weight: 700; font-variant-numeric: tabular-nums; }
+  .ev .m { font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+  .badge { display: inline-block; font-size: 11px; padding: 0 6px; border-radius: 4px; border: 1px solid var(--line); font-weight: 600; }
+  .badge.new { border-color: var(--warn); color: var(--warn); }
+  .badge.fall { border-color: var(--ok); color: var(--ok); }
+  .badge.false_alarm { border-color: var(--bad); color: var(--bad); }
+  .badge.kept { border-color: var(--accent); color: var(--accent); }
+  .recording { font-size: 13px; color: var(--bad); font-weight: 600; margin-bottom: 8px; display: none; }
+  .recording.show { display: block; }
+  details summary { cursor: pointer; color: var(--muted); font-size: 13px; margin: 12px 0 8px; }
+  /* xem lại */
+  .replay { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); gap: 16px; }
+  @media (max-width: 900px) { .replay { grid-template-columns: 1fr; } }
+  .stage { position: relative; background: #000; border-radius: 6px; overflow: hidden; }
+  .stage canvas { display: block; width: 100%; height: auto; }
+  .chart { width: 100%; height: 170px; display: block; cursor: pointer; margin-top: 8px; touch-action: none; }
+  .controls { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-top: 8px; }
+  .controls input[type=range] { flex: 1 1 160px; min-width: 0; }
+  .frameinfo { font-size: 13px; font-variant-numeric: tabular-nums; margin-top: 6px; min-height: 42px; }
+  .legend { font-size: 12px; color: var(--muted); display: flex; gap: 4px 14px; flex-wrap: wrap; margin-top: 4px; }
+  .legend i { display: inline-block; width: 14px; height: 3px; vertical-align: middle; margin-right: 4px; }
+  .kv { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 2px 12px; font-size: 13px; margin-bottom: 10px; }
+  .kv span:nth-child(odd) { color: var(--muted); }
+  .kv span { overflow-wrap: anywhere; }
+  .guide { font-size: 12px; color: var(--muted); border-left: 3px solid var(--line); padding: 4px 10px; margin: 10px 0; }
+  .guide b { color: var(--text); }
+  textarea { width: 100%; min-height: 54px; padding: 7px 9px; border: 1px solid var(--line); border-radius: 6px;
+             background: var(--bg); color: var(--text); font: inherit; resize: vertical; }
+  kbd { font-size: 11px; border: 1px solid var(--line); border-radius: 3px; padding: 0 4px; }
+</style>
+</head>
+<body>
+<div class="alarm" id="alarm" role="alert">
+  <span id="alarmText">⚠ PHÁT HIỆN NGÃ</span>
+  <button id="alarmView">Xem lại diễn biến</button>
+  <button id="alarmOff">Đã biết, tắt chuông</button>
+</div>
+<header>
+  <h1>Giám sát ngã</h1>
+  <span><span class="dot" id="hdrDot"></span><span id="hdrStatus">đang tải…</span></span>
+  <a href="/" style="font-size:13px;font-weight:600">← Trang chính</a>
+</header>
+
+<main>
+  <!-- =============================== trực tiếp -->
+  <section>
+    <h2>Trực tiếp <small>chạy nền trên máy chủ — đóng trang vẫn giám sát</small></h2>
+    <div class="row">
+      <input type="text" id="source" placeholder="maix://192.168.1.50  |  rtsp://...  |  0 (webcam)"
+             value="{{ default_source }}" aria-label="Nguồn camera">
+      <select id="model" aria-label="Model">
+        {% for c in checkpoints %}<option value="{{ c }}" {% if c == clf_selected %}selected{% endif %}>{{ labels.get(c, c) }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="row">
+      <label class="switch"><input type="checkbox" id="optFilter" {% if filter_on %}checked{% endif %}> Lọc khung xương</label>
+      <label class="switch"><input type="checkbox" id="optSkel" checked> Vẽ khung xương</label>
+      <span style="flex:1"></span>
+      <button class="primary" id="btnStart">Bắt đầu giám sát</button>
+      <button id="btnStop">Dừng</button>
+    </div>
+    <div class="viewer" id="viewer"><div class="ph" id="ph">Chưa giám sát. Nhập nguồn rồi bấm “Bắt đầu giám sát”.<br>
+      MaixCAM chạy <code>maixcam_app</code>: nhập <b>maix://&lt;IP MaixCAM&gt;</b></div></div>
+    <div class="note" id="liveErr"></div>
+    <div class="fallpanel" id="fallPanel">
+      <div><div class="fall-state" id="fallState">—</div><div class="muted" style="font-size:12px" id="fallSub"></div></div>
+      <div class="fall-pct" id="fallPct">—</div>
+      <canvas id="spark" aria-label="P(ngã) gần đây"></canvas>
+    </div>
+    <div class="stats">
+      <div class="stat"><b id="sFps">—</b><small>FPS xử lý</small></div>
+      <div class="stat"><b id="sPose">—</b><small>pose ms</small></div>
+      <div class="stat"><b id="sValid">—</b><small>có người</small></div>
+      <div class="stat"><b id="sFrames">—</b><small>khung</small></div>
+      <div class="stat"><b id="sSkip">—</b><small>báo trùng bỏ qua</small></div>
+    </div>
+    <div class="row" style="margin-top:10px;margin-bottom:0">
+      <label class="switch"><input type="checkbox" id="optSound"> Chuông khi phát hiện ngã (trên thiết bị này)</label>
+    </div>
+  </section>
+
+  <!-- =============================== danh sách event -->
+  <section>
+    <h2>{{ max_events }} cảnh báo gần nhất <small>{{ pre_s }} s trước → {{ post_s }} s sau cảnh báo</small></h2>
+    <div class="recording" id="recording">● Đang ghi lại một cảnh báo…</div>
+    <div class="evlist" id="evList"><div class="muted">Chưa có cảnh báo nào.</div></div>
+    <details id="savedBox"><summary>Đã lưu vĩnh viễn (<span id="savedN">0</span>)</summary>
+      <div class="evlist" id="savedList"></div></details>
+    <div class="note">Mỗi khi có cảnh báo mới, event cũ nhất bị xóa (ưu tiên xóa event đã gắn nhãn trước).
+      Bấm “Lưu vĩnh viễn” để giữ lại làm dữ liệu.</div>
+  </section>
+
+  <!-- =============================== xem lại -->
+  <section class="full" id="replayBox" hidden>
+    <h2 id="rpTitle">Xem lại</h2>
+    <div class="replay">
+      <div>
+        <div class="stage"><canvas id="stage" aria-label="Khung hình xem lại"></canvas></div>
+        <div class="controls">
+          <button class="small" id="bFirst" title="Khung đầu">⏮</button>
+          <button class="small" id="bPrev" title="Khung trước (←)">◀</button>
+          <button class="small" id="bPlay" title="Phát / dừng (Space)">▶</button>
+          <button class="small" id="bNext" title="Khung sau (→)">▶▶</button>
+          <button class="small" id="bAlert" title="Nhảy tới lúc cảnh báo">⚠ lúc báo</button>
+          <select id="speed" aria-label="Tốc độ"><option value="0.25">0.25×</option><option value="0.5">0.5×</option>
+            <option value="1" selected>1×</option><option value="2">2×</option></select>
+          <input type="range" id="scrub" min="0" max="0" value="0" aria-label="Tua">
+        </div>
+        <div class="controls">
+          <label class="switch"><input type="checkbox" id="rSkel" checked> Khung xương</label>
+          <label class="switch"><input type="checkbox" id="rBox" checked> Hộp bao</label>
+          <label class="switch"><input type="checkbox" id="rIdx"> Số thứ tự khớp</label>
+          <label class="switch"><input type="checkbox" id="rImg" checked> Ảnh</label>
+        </div>
+        <div class="frameinfo" id="frameInfo"></div>
+        <canvas class="chart" id="chart" aria-label="P(ngã) theo thời gian, bấm để tua"></canvas>
+        <div class="legend">
+          <span><i style="background:var(--bad)"></i>P(ngã) lúc chạy</span>
+          <span id="lgAlt" hidden><i style="background:var(--alt)"></i><span id="lgAltName">chạy lại</span></span>
+          <span><i style="background:var(--text);opacity:.6"></i>ngưỡng</span>
+          <span><i style="background:var(--win);height:9px"></i>cửa sổ model dùng lúc báo</span>
+          <span><i style="background:var(--muted);height:5px"></i>dải dưới: xanh = thấy người, đỏ = mất người</span>
+        </div>
+        <div class="note"><kbd>←</kbd> <kbd>→</kbd> từng khung · <kbd>Space</kbd> phát/dừng · bấm biểu đồ để tua</div>
+      </div>
+      <div>
+        <div class="kv" id="rpMeta"></div>
+        <div class="guide">
+          <b>Đọc thế nào?</b> Vùng xanh là <b>đúng các khung model nhìn</b> khi báo ngã. Tua từng khung trong vùng đó:<br>
+          • Khung xương nhảy lung tung / mất người / bám nhầm đồ vật → <b>lỗi trích xuất (pose)</b>.<br>
+          • Khung xương đúng mà người chỉ ngồi, cúi, nằm xuống chậm → <b>lỗi model</b>.<br>
+          • Đường đỏ bắt đầu tăng sớm hơn hay muộn hơn lúc ngã thật → độ trễ của hệ thống.
+        </div>
+        <div class="row">
+          <button class="good" id="bTrue">✓ Báo đúng (ngã thật)</button>
+          <button class="badb" id="bFalse">✗ Báo sai</button>
+          <button class="small" id="bClear">Bỏ nhãn</button>
+        </div>
+        <textarea id="rpNote" placeholder="Ghi chú: ví dụ “cúi nhặt đồ”, “khung xương bám vào ghế”…"></textarea>
+        <div class="row" style="margin-top:6px"><button class="small" id="bNote">Lưu ghi chú</button>
+          <span class="note" id="noteMsg"></span></div>
+        <h2 style="margin-top:14px">Chạy lại bằng model khác</h2>
+        <div class="row">
+          <select id="rrModel" aria-label="Model chạy lại">
+            {% for c in checkpoints %}<option value="{{ c }}">{{ labels.get(c, c) }}</option>{% endfor %}
+          </select>
+          <button id="bRerun">Chạy lại</button>
+        </div>
+        <div class="note" id="rrMsg">Dùng đúng chuỗi khung xương đã lưu, không cần camera — so đường tím với đường đỏ.</div>
+        <div class="row" style="margin-top:14px">
+          <button id="bKeep">Lưu vĩnh viễn</button>
+          <button class="badb" id="bDel">Xóa event</button>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script>
+const EDGES = {{ edges|tojson }};
+const DRAW_CONF = {{ draw_conf|tojson }};
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
+const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+const store = {
+  get(k, d) { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch (e) { return d; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} },
+};
+async function api(url, opt = {}) {
+  const r = await fetch(url, opt.body ? {method: "POST", headers: {"Content-Type": "application/json"}, ...opt, body: JSON.stringify(opt.body)} : opt);
+  let j = null; try { j = await r.json(); } catch (e) {}
+  if (!r.ok) throw new Error((j && j.error) || r.statusText);
+  return j;
+}
+function fmtTime(iso) {
+  const d = new Date(iso); if (isNaN(d)) return iso;
+  return d.toLocaleString("vi-VN", {hour: "2-digit", minute: "2-digit", second: "2-digit", day: "2-digit", month: "2-digit"});
+}
+const pct = (p) => p == null ? "—" : Math.round(p * 100) + "%";
+const LABEL_TXT = {fall: "báo đúng", false_alarm: "báo sai"};
+
+// ============================================================ trực tiếp
+let liveOn = false, lastAlertSeq = null, lastEvVersion = null, lastStatus = {};
+$("source").value = $("source").value || store.get("mon.source", "");
+$("optSound").checked = store.get("mon.sound", false);
+
+$("btnStart").onclick = async () => {
+  $("liveErr").textContent = "";
+  store.set("mon.source", $("source").value.trim());
+  $("btnStart").disabled = true;
+  try {
+    await api("/api/monitor/start", {body: {source: $("source").value.trim(), checkpoint: $("model").value,
+                                            filter: $("optFilter").checked, skeleton: $("optSkel").checked}});
+    setLive(false);
+  } catch (e) { $("liveErr").innerHTML = `<span class="bad">${esc(e.message)}</span>`; }
+  $("btnStart").disabled = false;
+  poll();
+};
+$("btnStop").onclick = async () => { await api("/api/monitor/stop", {method: "POST"}); setLive(false); poll(); };
+$("optSound").onchange = () => { store.set("mon.sound", $("optSound").checked); if ($("optSound").checked) beep(0.15); };
+
+function setLive(on) {
+  if (on === liveOn) return;
+  liveOn = on;
+  const v = $("viewer");
+  if (on) {
+    v.innerHTML = `<img alt="Luồng trực tiếp" src="/monitor/stream?ts=${Date.now()}">`;
+    v.querySelector("img").onerror = () => { liveOn = false; };
+  } else {
+    v.innerHTML = `<div class="ph">${lastStatus.running ? "Đang kết nối camera…" : "Chưa giám sát."}</div>`;
+  }
+}
+
+const STATUS_TXT = {live: "đang giám sát", connecting: "đang kết nối…", reconnecting: "mất kết nối, đang thử lại…",
+                    stopped: "đã dừng", finished: "hết video", error: "lỗi"};
+function renderStatus(s) {
+  lastStatus = s;
+  const st = s.running ? s.status : (s.status === "error" ? "error" : (s.status === "finished" ? "finished" : "stopped"));
+  const dotCls = st === "live" ? "live" : (st === "error" || st === "reconnecting") ? "err" : s.running ? "wait" : "";
+  $("hdrDot").className = "dot " + dotCls;
+  $("hdrStatus").textContent = (STATUS_TXT[st] || st) + (s.running && s.source ? " · " + s.source : "") +
+                               (s.running && s.model ? " · " + s.model : "");
+  $("liveErr").innerHTML = s.error ? `<span class="${s.running ? "warn" : "bad"}">${esc(s.error)}</span>` : "";
+  if (s.running && s.opts && document.activeElement !== $("source")) $("source").value = s.opts.source || $("source").value;
+  setLive(s.running && !!s.frame_at && st === "live" || (liveOn && s.running));
+  const fp = $("fallPanel");
+  const fresh = s.running && st === "live";
+  if (!fresh || s.prob == null) {
+    fp.className = "fallpanel"; $("fallState").textContent = s.running ? `đang gom khung ${s.collected ?? 0}/${s.window_size ?? "?"}` : "—";
+    $("fallPct").textContent = "—"; $("fallSub").textContent = "";
+  } else if (s.label === 1) {
+    fp.className = "fallpanel st-fall"; $("fallState").textContent = "NGÃ"; $("fallPct").textContent = pct(s.prob);
+  } else {
+    fp.className = "fallpanel st-ok"; $("fallState").textContent = s.gated ? "chuyển động chậm" : "Bình thường";
+    $("fallPct").textContent = pct(s.prob);
+  }
+  if (fresh) $("fallSub").textContent = `ngưỡng ${s.threshold?.toFixed?.(2) ?? "?"} · ${s.valid ? "thấy người" : "không thấy người"}`;
+  $("sFps").textContent = fresh ? s.fps : "—";
+  $("sPose").textContent = fresh ? s.pose_ms : "—";
+  $("sValid").textContent = fresh ? pct(s.valid_ratio) : "—";
+  $("sFrames").textContent = s.frames ?? "—";
+  $("sSkip").textContent = s.skipped_alerts ?? "—";
+  $("recording").classList.toggle("show", !!s.recording);
+  drawSpark(s.hist || [], s.threshold);
+  if (lastAlertSeq !== null && s.alert_seq > lastAlertSeq) raiseAlarm();
+  lastAlertSeq = s.alert_seq;
+  if (s.events_version !== lastEvVersion) { lastEvVersion = s.events_version; loadEvents(); }
+}
+
+function drawSpark(hist, thr) {
+  const c = $("spark"), dpr = devicePixelRatio || 1, w = c.clientWidth, h = c.clientHeight;
+  c.width = w * dpr; c.height = h * dpr;
+  const g = c.getContext("2d"); g.scale(dpr, dpr); g.clearRect(0, 0, w, h);
+  if (!hist.length) return;
+  const t1 = hist[hist.length - 1][0], t0 = Math.max(hist[0][0], t1 - 30);
+  const X = (t) => (t1 > t0 ? (t - t0) / (t1 - t0) : 1) * (w - 2) + 1, Y = (p) => h - 2 - p * (h - 4);
+  if (thr != null) { g.strokeStyle = css("--muted"); g.setLineDash([4, 3]); g.beginPath(); g.moveTo(0, Y(thr)); g.lineTo(w, Y(thr)); g.stroke(); g.setLineDash([]); }
+  g.strokeStyle = css("--bad"); g.lineWidth = 2; g.beginPath();
+  hist.filter((r) => r[0] >= t0).forEach((r, i) => i ? g.lineTo(X(r[0]), Y(r[1])) : g.moveTo(X(r[0]), Y(r[1])));
+  g.stroke();
+}
+
+async function poll() {
+  try { renderStatus(await api("/api/monitor")); }
+  catch (e) { $("hdrDot").className = "dot err"; $("hdrStatus").textContent = "mất kết nối tới máy chủ web"; }
+}
+setInterval(poll, 800); poll();
+
+// ============================================================ chuông
+let audioCtx = null, beepTimer = null;
+function beep(dur = 0.35) {
+  try {
+    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    const o = audioCtx.createOscillator(), gn = audioCtx.createGain();
+    o.type = "square"; o.frequency.value = 880; gn.gain.value = 0.12;
+    o.connect(gn); gn.connect(audioCtx.destination); o.start(); o.stop(audioCtx.currentTime + dur);
+  } catch (e) {}
+}
+function raiseAlarm() {
+  $("alarmText").textContent = "⚠ PHÁT HIỆN NGÃ lúc " + new Date().toLocaleTimeString("vi-VN");
+  $("alarm").classList.add("show");
+  if ($("optSound").checked && !beepTimer) { beep(); beepTimer = setInterval(beep, 700); }
+}
+function stopAlarm() { $("alarm").classList.remove("show"); clearInterval(beepTimer); beepTimer = null; }
+$("alarmOff").onclick = stopAlarm;
+$("alarmView").onclick = async () => {
+  stopAlarm();
+  const tryOpen = async (n) => {
+    const d = await api("/api/events");
+    if (d.events.length && (!evData || d.events[0].id !== (evData.events[0] || {}).id || n === 0)) { renderEvents(d); openEvent(d.events[0].id); }
+    else if (n > 0) setTimeout(() => tryOpen(n - 1), 1500);       // event còn đang ghi (5 s sau cảnh báo)
+  };
+  tryOpen(6);
+};
+
+// ============================================================ danh sách event
+let evData = null, curId = null;
+async function loadEvents() { try { renderEvents(await api("/api/events")); } catch (e) {} }
+function evCard(m) {
+  const lab = m.label ? `<span class="badge ${m.label}">${LABEL_TXT[m.label]}</span>` : `<span class="badge new">chưa xem</span>`;
+  return `<button class="ev ${m.id === curId ? "sel" : ""}" data-id="${esc(m.id)}">
+    <img src="/events/${encodeURIComponent(m.id)}/thumb.jpg" alt="" loading="lazy">
+    <div><div class="t">${esc(fmtTime(m.created))}</div>
+      <div>${lab} ${m.kept ? '<span class="badge kept">đã lưu</span>' : ""}</div>
+      <div class="m">P(ngã) cao nhất ${pct(m.max_prob)} · ${esc(m.model || "")}<br>${esc(m.duration_s)} s · có người ${pct(m.valid_ratio)}
+      ${m.note ? "<br>“" + esc(m.note) + "”" : ""}</div></div></button>`;
+}
+function renderEvents(d) {
+  evData = d;
+  $("evList").innerHTML = d.events.length ? d.events.map(evCard).join("") : '<div class="muted">Chưa có cảnh báo nào.</div>';
+  $("savedList").innerHTML = d.saved.map(evCard).join("") || '<div class="muted">Chưa lưu event nào.</div>';
+  $("savedN").textContent = d.saved.length;
+  document.querySelectorAll(".ev").forEach((b) => b.onclick = () => openEvent(b.dataset.id));
+  if (curId && ![...d.events, ...d.saved].some((m) => m.id === curId)) { $("replayBox").hidden = true; curId = null; stopPlay(); }
+}
+
+// ============================================================ xem lại
+let ev = null, imgs = [], cur = 0, playing = false, playTimer = null, alt = null;
+async function openEvent(id) {
+  stopPlay();
+  let d;
+  try { d = await api("/api/events/" + encodeURIComponent(id)); } catch (e) { return; }
+  ev = d; curId = id; alt = null; $("lgAlt").hidden = true; $("rrMsg").textContent = "Dùng đúng chuỗi khung xương đã lưu, không cần camera — so đường tím với đường đỏ.";
+  imgs = d.track.map((f, i) => { if (!f.img) return null; const im = new Image(); im.src = `/events/${encodeURIComponent(id)}/frame/${i}.jpg`; im.onload = () => { if (i === cur) drawFrame(); }; return im; });
+  const m = d.meta;
+  $("rpTitle").innerHTML = `Xem lại cảnh báo lúc ${esc(fmtTime(m.created))}`;
+  $("rpMeta").innerHTML = [
+    ["Nguồn", m.source], ["Model", `${m.model || ""} ${m.checkpoint ? "(" + m.checkpoint + ")" : ""}`],
+    ["Ngưỡng", m.threshold?.toFixed?.(2)], ["P(ngã) lúc báo / cao nhất", `${pct(m.p_alert)} / ${pct(m.max_prob)}`],
+    ["Cửa sổ model", m.window ? `${m.window_size} khung (khung ${m.window[0]}–${m.window[1]})` : "—"],
+    ["Clip", `${m.n_frames} khung · ${m.duration_s} s · ~${m.fps ?? "?"} fps`],
+    ["Số lần báo trong clip", (m.alert_frames || []).length], ["Thấy người", pct(m.valid_ratio)],
+    ["Lọc khung xương", m.filter ? "bật" : "tắt"],
+  ].map(([k, v]) => `<span>${k}</span><span>${esc(v ?? "—")}</span>`).join("");
+  $("rpNote").value = m.note || ""; $("noteMsg").textContent = "";
+  $("bKeep").textContent = m.kept ? "Bỏ lưu vĩnh viễn" : "Lưu vĩnh viễn";
+  renderLabel();
+  $("scrub").max = d.track.length - 1;
+  $("replayBox").hidden = false;
+  try { history.replaceState(null, "", "#ev=" + encodeURIComponent(id)); } catch (e) {}
+  if (evData) renderEvents(evData);
+  seek(Math.max(0, (m.window ? m.window[0] : m.alert_frame) - 5));
+  $("replayBox").scrollIntoView({behavior: "smooth", block: "start"});
+}
+function renderLabel() {
+  const l = ev.meta.label;
+  $("bTrue").classList.toggle("on", l === "fall"); $("bFalse").classList.toggle("on", l === "false_alarm");
+}
+
+function seek(i) {
+  if (!ev) return;
+  cur = Math.max(0, Math.min(ev.track.length - 1, i | 0));
+  $("scrub").value = cur;
+  drawFrame(); drawChart(); frameInfo();
+}
+function frameInfo() {
+  const f = ev.track[cur], m = ev.meta, dt = f.t - m.t_alert;
+  const inWin = m.window && cur >= m.window[0] && cur <= m.window[1];
+  const lab = f.p == null ? "chưa có dự đoán" : (f.label === 1 ? `<b class="bad">NGÃ ${pct(f.p)}</b>` : f.gated ? `<span class="warn">chậm ${pct(f.p)}</span>` : `<span class="good-t">không ngã ${pct(f.p)}</span>`);
+  const nJ = f.joints ? f.joints.filter((j) => j && j[2] >= DRAW_CONF).length : 0;
+  $("frameInfo").innerHTML = `Khung <b>${cur}</b>/${ev.track.length - 1} · t=${f.t.toFixed(2)} s
+    (<b>${dt >= 0 ? "+" : ""}${dt.toFixed(1)} s</b> so với lúc báo)${inWin ? ' · <b style="color:var(--accent)">trong cửa sổ model</b>' : ""}<br>
+    ${f.valid ? `thấy người · ${nJ}/17 khớp tin cậy` : '<span class="bad">không thấy người</span>'} · ${lab}${f.pred ? " · <i>model dự đoán ở khung này</i>" : ""}`;
+}
+
+function drawFrame() {
+  if (!ev) return;
+  const c = $("stage"), f = ev.track[cur], im = imgs[cur], m = ev.meta;
+  const W = im && im.naturalWidth ? im.naturalWidth : (m.width || 640), H = im && im.naturalHeight ? im.naturalHeight : (m.height || 480);
+  const scale = Math.max(1, Math.min(2, (c.parentElement.clientWidth * (devicePixelRatio || 1)) / W));
+  c.width = W * scale; c.height = H * scale;
+  const g = c.getContext("2d");
+  g.fillStyle = "#000"; g.fillRect(0, 0, c.width, c.height);
+  if ($("rImg").checked && im && im.complete && im.naturalWidth) g.drawImage(im, 0, 0, c.width, c.height);
+  const lw = Math.max(2, c.width / 260);
+  const P = (j) => [j[0] * c.width, j[1] * c.height];
+  if (f.valid && f.bbox && $("rBox").checked) {
+    g.strokeStyle = "#3fb950"; g.lineWidth = lw * 0.7;
+    g.strokeRect(f.bbox[0] * c.width, f.bbox[1] * c.height, (f.bbox[2] - f.bbox[0]) * c.width, (f.bbox[3] - f.bbox[1]) * c.height);
+  }
+  if (f.valid && f.joints && $("rSkel").checked) {
+    g.lineWidth = lw; g.lineCap = "round";
+    for (const [a, b] of EDGES) {
+      const ja = f.joints[a], jb = f.joints[b];
+      if (!ja || !jb) continue;
+      const weak = ja[2] < DRAW_CONF || jb[2] < DRAW_CONF;
+      g.strokeStyle = weak ? "rgba(255,120,120,.55)" : "#ffd33d";
+      g.beginPath(); g.moveTo(...P(ja)); g.lineTo(...P(jb)); g.stroke();
+    }
+    f.joints.forEach((j, k) => {
+      if (!j) return;
+      const [x, y] = P(j);
+      g.fillStyle = j[2] < DRAW_CONF ? "#ff6b6b" : "#58a6ff";
+      g.beginPath(); g.arc(x, y, lw * 1.4, 0, Math.PI * 2); g.fill();
+      if ($("rIdx").checked) { g.fillStyle = "#fff"; g.font = `${Math.round(lw * 5)}px system-ui`; g.fillText(k, x + lw * 2, y - lw); }
+    });
+  }
+  // nhãn góc trên
+  const fs = Math.round(c.height / 22);
+  g.font = `700 ${fs}px system-ui`;
+  const tag = (txt, color, x, right) => {
+    const w = g.measureText(txt).width + fs * 0.6;
+    const x0 = right ? c.width - w - 8 : x;
+    g.fillStyle = color; g.fillRect(x0, 8, w, fs * 1.4);
+    g.fillStyle = "#fff"; g.fillText(txt, x0 + fs * 0.3, 8 + fs * 1.05);
+  };
+  if (!f.valid) tag("KHÔNG THẤY NGƯỜI", "rgba(198,40,40,.85)", 8);
+  if (f.p != null) tag(f.label === 1 ? `NGÃ ${pct(f.p)}` : `${f.gated ? "chậm" : "không ngã"} ${pct(f.p)}`,
+                       f.label === 1 ? "rgba(198,40,40,.9)" : f.gated ? "rgba(179,89,0,.9)" : "rgba(26,127,55,.9)", 0, true);
+  if ((m.alert_frames || []).includes(cur)) tag("⚠ CẢNH BÁO", "rgba(198,40,40,.95)", 8 + (f.valid ? 0 : fs * 11));
+  const dt = f.t - m.t_alert;
+  g.font = `600 ${Math.round(fs * 0.8)}px system-ui`; g.fillStyle = "#fff"; g.strokeStyle = "#000"; g.lineWidth = 3;
+  const s = `${dt >= 0 ? "+" : ""}${dt.toFixed(1)} s`; g.strokeText(s, 10, c.height - 12); g.fillText(s, 10, c.height - 12);
+}
+
+function chartGeom() {
+  const c = $("chart"), dpr = devicePixelRatio || 1, w = c.clientWidth, h = c.clientHeight;
+  const T = ev.track, t0 = T[0].t, t1 = T[T.length - 1].t || 1;
+  const L = 34, R = 8, top = 8, bot = 34;
+  return {c, dpr, w, h, L, R, top, bot, X: (t) => L + (t - t0) / (t1 - t0 || 1) * (w - L - R),
+          Y: (p) => top + (1 - p) * (h - top - bot), tOf: (x) => t0 + (x - L) / (w - L - R) * (t1 - t0)};
+}
+function drawChart() {
+  if (!ev) return;
+  const G = chartGeom(), {c, dpr, w, h, X, Y, L, R, top, bot} = G, T = ev.track, m = ev.meta;
+  c.width = w * dpr; c.height = h * dpr;
+  const g = c.getContext("2d"); g.scale(dpr, dpr); g.clearRect(0, 0, w, h);
+  const muted = css("--muted"), line = css("--line");
+  // cửa sổ model
+  if (m.window) { g.fillStyle = css("--win"); g.fillRect(X(T[m.window[0]].t), top, Math.max(2, X(T[m.window[1]].t) - X(T[m.window[0]].t)), h - top - bot); }
+  // lưới
+  g.strokeStyle = line; g.lineWidth = 1; g.fillStyle = muted; g.font = "11px system-ui";
+  for (const p of [0, 0.5, 1]) { g.beginPath(); g.moveTo(L, Y(p)); g.lineTo(w - R, Y(p)); g.stroke(); g.fillText(p.toFixed(1), 6, Y(p) + 4); }
+  const tA = m.t_alert, tMin = Math.ceil(T[0].t - tA), tMax = Math.floor(T[T.length - 1].t - tA);
+  for (let s = tMin; s <= tMax; s++) { const x = X(tA + s); g.fillText((s > 0 ? "+" : "") + s + "s", x - 8, h - bot + 26); }
+  // ngưỡng
+  if (m.threshold != null) { g.strokeStyle = css("--text"); g.globalAlpha = .6; g.setLineDash([5, 4]); g.beginPath(); g.moveTo(L, Y(m.threshold)); g.lineTo(w - R, Y(m.threshold)); g.stroke(); g.setLineDash([]); g.globalAlpha = 1; }
+  // P(ngã) lúc chạy (các khung model thật sự dự đoán)
+  const pts = T.map((f) => f.pred && f.p != null ? [f.t, f.p, f.label] : null).filter(Boolean);
+  g.strokeStyle = css("--bad"); g.lineWidth = 2; g.beginPath();
+  pts.forEach(([t, p], i) => i ? g.lineTo(X(t), Y(p)) : g.moveTo(X(t), Y(p))); g.stroke();
+  g.fillStyle = css("--bad"); pts.forEach(([t, p]) => { g.beginPath(); g.arc(X(t), Y(p), 2.5, 0, 7); g.fill(); });
+  // chạy lại bằng model khác
+  if (alt) {
+    g.strokeStyle = css("--alt"); g.lineWidth = 2; g.beginPath();
+    alt.t.forEach((t, i) => i ? g.lineTo(X(t), Y(alt.p[i])) : g.moveTo(X(t), Y(alt.p[i]))); g.stroke();
+    if (alt.threshold != null) { g.setLineDash([2, 3]); g.beginPath(); g.moveTo(L, Y(alt.threshold)); g.lineTo(w - R, Y(alt.threshold)); g.stroke(); g.setLineDash([]); }
+  }
+  // dải có người
+  const sy = h - bot + 4, sh = 7;
+  T.forEach((f, i) => { const x0 = X(f.t), x1 = i + 1 < T.length ? X(T[i + 1].t) : w - R;
+    g.fillStyle = f.valid ? css("--ok") : css("--bad"); g.globalAlpha = .7; g.fillRect(x0, sy, Math.max(1, x1 - x0), sh); });
+  g.globalAlpha = 1;
+  // lúc báo
+  g.strokeStyle = css("--bad"); g.lineWidth = 2;
+  (m.alert_frames || []).forEach((i) => { const x = X(T[i].t); g.beginPath(); g.moveTo(x, top); g.lineTo(x, h - bot); g.stroke(); });
+  // con trỏ
+  const xc = X(T[cur].t); g.strokeStyle = css("--accent"); g.lineWidth = 2; g.beginPath(); g.moveTo(xc, top - 4); g.lineTo(xc, sy + sh + 2); g.stroke();
+}
+function chartSeek(e) {
+  if (!ev) return;
+  const G = chartGeom(), r = G.c.getBoundingClientRect(), t = G.tOf(e.clientX - r.left);
+  let best = 0; ev.track.forEach((f, i) => { if (Math.abs(f.t - t) < Math.abs(ev.track[best].t - t)) best = i; });
+  seek(best);
+}
+let dragging = false;
+$("chart").addEventListener("pointerdown", (e) => { dragging = true; stopPlay(); chartSeek(e); });
+addEventListener("pointermove", (e) => { if (dragging) chartSeek(e); });
+addEventListener("pointerup", () => dragging = false);
+
+function stopPlay() { playing = false; clearTimeout(playTimer); $("bPlay").textContent = "▶"; }
+function playStep() {
+  if (!playing || !ev) return;
+  if (cur >= ev.track.length - 1) { stopPlay(); return; }
+  const dt = (ev.track[cur + 1].t - ev.track[cur].t) || 0.1;
+  seek(cur + 1);
+  playTimer = setTimeout(playStep, dt * 1000 / +$("speed").value);
+}
+$("bPlay").onclick = () => { if (playing) return stopPlay(); if (cur >= ev.track.length - 1) seek(0); playing = true; $("bPlay").textContent = "⏸"; playStep(); };
+$("bPrev").onclick = () => { stopPlay(); seek(cur - 1); };
+$("bNext").onclick = () => { stopPlay(); seek(cur + 1); };
+$("bFirst").onclick = () => { stopPlay(); seek(0); };
+$("bAlert").onclick = () => { stopPlay(); seek(ev.meta.alert_frame); };
+$("scrub").oninput = () => { stopPlay(); seek(+$("scrub").value); };
+["rSkel", "rBox", "rIdx", "rImg"].forEach((id) => $(id).onchange = drawFrame);
+addEventListener("keydown", (e) => {
+  if (!ev || $("replayBox").hidden || ["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement.tagName)) return;
+  if (e.key === "ArrowLeft") { e.preventDefault(); $("bPrev").click(); }
+  else if (e.key === "ArrowRight") { e.preventDefault(); $("bNext").click(); }
+  else if (e.key === " ") { e.preventDefault(); $("bPlay").click(); }
+});
+addEventListener("resize", () => { if (ev) { drawFrame(); drawChart(); } });
+
+// nhãn, ghi chú, lưu, xóa, chạy lại
+async function setLabel(label) {
+  const r = await api(`/api/events/${encodeURIComponent(curId)}/label`, {body: {label}});
+  ev.meta = {...ev.meta, ...r.meta}; renderLabel(); loadEvents();
+}
+$("bTrue").onclick = () => setLabel(ev.meta.label === "fall" ? null : "fall");
+$("bFalse").onclick = () => setLabel(ev.meta.label === "false_alarm" ? null : "false_alarm");
+$("bClear").onclick = () => setLabel(null);
+$("bNote").onclick = async () => {
+  await api(`/api/events/${encodeURIComponent(curId)}/label`, {body: {label: ev.meta.label, note: $("rpNote").value}});
+  $("noteMsg").textContent = "đã lưu"; loadEvents();
+};
+$("bKeep").onclick = async () => {
+  const keep = !ev.meta.kept;
+  await api(`/api/events/${encodeURIComponent(curId)}/keep`, {body: {keep}});
+  ev.meta.kept = keep; $("bKeep").textContent = keep ? "Bỏ lưu vĩnh viễn" : "Lưu vĩnh viễn"; loadEvents();
+};
+$("bDel").onclick = async () => {
+  if (!confirm("Xóa event này? Không khôi phục được.")) return;
+  await api(`/api/events/${encodeURIComponent(curId)}`, {method: "DELETE"});
+  $("replayBox").hidden = true; curId = null; ev = null; stopPlay(); loadEvents();
+};
+$("bRerun").onclick = async () => {
+  $("bRerun").disabled = true; $("rrMsg").textContent = "đang chạy…";
+  try {
+    const r = await api(`/api/events/${encodeURIComponent(curId)}/rerun`, {body: {checkpoint: $("rrModel").value}});
+    alt = r; $("lgAlt").hidden = false; $("lgAltName").textContent = `${r.model} (ngưỡng ${r.threshold.toFixed(2)})`;
+    const nFall = r.label.filter((x) => x === 1).length;
+    $("rrMsg").innerHTML = `${esc(r.model)}: P(ngã) cao nhất <b>${pct(Math.max(0, ...r.p))}</b> · ${nFall ? `<b class="bad">báo ngã ${nFall}/${r.p.length} lần dự đoán</b>` : '<b class="good-t">không báo ngã</b>'}`;
+    drawChart();
+  } catch (e) { $("rrMsg").innerHTML = `<span class="bad">${esc(e.message)}</span>`; }
+  $("bRerun").disabled = false;
+};
+
+// link dạng /monitor#ev=<id> mở thẳng event đó (gửi cho người khác xem lại)
+const hashEv = decodeURIComponent((location.hash.match(/^#ev=(.+)$/) || [])[1] || "");
+if (hashEv) openEvent(hashEv);
+</script>
+</body>
+</html>

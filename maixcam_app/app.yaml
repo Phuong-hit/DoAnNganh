@@ -1,0 +1,11 @@
+id: fall_monitor
+name: Fall Monitor
+version: 1.0.0
+author: DoAnNganh
+icon: ""
+desc: Camera -> YOLO11-pose (NPU) -> HTTP stream (anh + keypoint) cho web phat hien nga tren PC
+files:
+  - app.yaml
+  - main.py
+  - src
+  - model_classify

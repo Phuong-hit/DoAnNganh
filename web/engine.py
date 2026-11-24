@@ -82,13 +82,33 @@ def build_drawer(cfg: dict) -> SkeletonDraw:
 AUTO_CHECKPOINTS = ("models/b1_lstm.pt", "models/shiftgcn_best.pt")
 
 
+CHECKPOINT_DIRS = ("models", "model_classify")
+
+
+def model_choices(cfg: dict | None) -> dict:
+    """classifier.choices trong configs/web.yaml: {đường dẫn: {label, threshold, postprocess...}} (rỗng = không giới hạn)."""
+    return dict(((cfg or {}).get("classifier") or {}).get("choices") or {})
+
+
+def model_labels(cfg: dict | None) -> dict:
+    """{đường dẫn checkpoint: tên hiển thị trên web}."""
+    return {k: str((v or {}).get("label") or Path(k).stem) for k, v in model_choices(cfg).items()}
+
+
 def list_checkpoints(cfg: dict | None = None) -> list[str]:
-    """Các checkpoint phân loại ngã trong models/ (bỏ qua trọng số YOLO)."""
-    d = resolve("models")
-    if not d.is_dir():
-        return []
-    return sorted(f"models/{p.name}" for p in [*d.glob("*.pt"), *d.glob("b0_*.json")]
-                  if "yolo" not in p.name.lower() and "pose" not in p.name.lower())
+    """Các checkpoint phân loại ngã hiện trên web. Có classifier.choices thì CHỈ các model đó (file phải tồn tại),
+    không thì mọi file trong models/ và model_classify/ (bỏ qua trọng số YOLO)."""
+    choices = model_choices(cfg)
+    if choices:
+        return [k for k in choices if resolve(k).is_file()]
+    out = []
+    for name in CHECKPOINT_DIRS:
+        d = resolve(name)
+        if not d.is_dir():
+            continue
+        out += [f"{name}/{p.name}" for p in [*d.glob("*.pt"), *d.glob("b0_*.json")]
+                if "yolo" not in p.name.lower() and "pose" not in p.name.lower()]
+    return sorted(out)
 
 
 def classifier_path(cfg: dict) -> Path | None:
@@ -112,10 +132,14 @@ def build_classifier(cfg: dict):
     if path is None:
         return None
     from src.classifier import FallClassifier
-    c = cfg.get("classifier") or {}
+    c = dict(cfg.get("classifier") or {})
+    for key, over in model_choices(cfg).items():       # tham số riêng của model đang chọn (classifier.choices)
+        if resolve(key).resolve() == Path(path).resolve():
+            c.update({k: v for k, v in (over or {}).items() if k != "label"})
+            break
     return FallClassifier(path, window_size=c.get("window_size"), stride_frames=c.get("stride_frames", 5),
                           device=c.get("device"), fall_threshold=c.get("threshold"), verbose=False,
-                          speed_gate=c.get("speed_gate"))
+                          speed_gate=c.get("speed_gate"), postprocess=c.get("postprocess"))
 
 
 def pose_tag(cfg: dict) -> str:
@@ -189,7 +213,13 @@ class OpenedSource:
         fps = cfg["source"].get("target_fps")
         text = str(spec).strip()
         try:
-            if text.isdigit() or text.lower().startswith(STREAM_PREFIXES):
+            if text.lower().startswith("maix://"):
+                from .maixcam import MaixPoseSource
+                self.video_id = video_id or "maix_" + make_video_id(urlparse(text).hostname or "cam")
+                self.src = MaixPoseSource(text, target_fps=float(fps or 10.0), video_id=self.video_id)
+                self.is_live = True
+                self.kind = "maix"                 # khung có sẵn .pose (pose chạy trên MaixCAM)
+            elif text.isdigit() or text.lower().startswith(STREAM_PREFIXES):
                 cam = int(text) if text.isdigit() else text
                 self.video_id = video_id or (f"webcam{cam}" if isinstance(cam, int)
                                              else "stream_" + make_video_id(urlparse(text).hostname or "url"))
@@ -267,8 +297,12 @@ class Stats:
                     wall_s=round(wall, 2))
 
 
-def estimate(estimator: PoseEstimate, flt: SkeletonFilter | None, frame, idx: int, t: float):
-    """Một bước của pipeline: pose (đo thời gian) -> lọc. Trả (pose_đã_lọc, latency_ms)."""
+def estimate(estimator: PoseEstimate | None, flt: SkeletonFilter | None, frame, idx: int, t: float,
+             pose: PoseResult | None = None, latency_ms: float = 0.0):
+    """Một bước của pipeline: pose (đo thời gian) -> lọc. Trả (pose_đã_lọc, latency_ms).
+    Truyền pose (đã tính sẵn, ví dụ trên MaixCAM) thì bỏ qua estimator, latency_ms là thời gian đo bên đó."""
+    if pose is not None:
+        return (flt.smooth(pose) if flt is not None else pose), latency_ms
     t0 = time.perf_counter()
     pose = estimator.process_frame(frame, idx, t)
     latency = (time.perf_counter() - t0) * 1000.0
@@ -287,6 +321,12 @@ def draw_hud(image: np.ndarray, lines: list[str]) -> np.ndarray:
         cv2.putText(image, line, (8, y), cv2.FONT_HERSHEY_SIMPLEX, scale, (255, 255, 255), 1, cv2.LINE_AA)
         y += step
     return image
+
+
+def estimate_packet(estimator: PoseEstimate | None, flt: SkeletonFilter | None, pkt):
+    """estimate() cho một gói khung: gói từ nguồn maix:// có sẵn .pose thì không chạy YOLO trên PC."""
+    return estimate(estimator, flt, pkt.frame, pkt.idx, pkt.t, pose=getattr(pkt, "pose", None),
+                    latency_ms=getattr(pkt, "pose_ms", 0.0))
 
 
 def draw_fall(image: np.ndarray, result: dict | None, threshold: float = 0.5) -> np.ndarray:
@@ -317,6 +357,14 @@ def predict_video(clf, item: dict, batch: int = 256) -> dict:
     from src.features import normalize_clip
     W, S = clf.window_size, clf.stride_frames
     seq, mask, t = item["seq"], item["mask"], np.asarray(item["t"], dtype=float)
+    if getattr(clf, "post", None) is not None and len(seq) >= W:
+        # Hậu xử lý kiểu nhánh final: kết quả từng khung, nhãn có giữ cảnh báo tới khi đứng thẳng.
+        idx, p, labels = clf.postprocess_sequence(seq, mask, item.get("valid"), float(item.get("aspect", 1.0)))
+        zeros = [0] * len(idx)
+        return dict(t=[round(float(t[e]), 3) for e in idx], p=[round(float(v), 4) for v in p],
+                    label=[int(v) for v in labels], shoulder_drop=zeros, rotation=zeros,
+                    gate=clf.gate.to_dict(), gate_text=clf.describe_post(),
+                    threshold=clf.fall_threshold, window_size=W, stride_frames=S, model=clf.name)
     if 0 < len(seq) < W:
         # Video ngắn hơn cửa sổ (clip ~1.9 s): một dự đoán trên cả video, đệm cuối như lúc tạo dataset.
         ps, pm = pad_to_window(seq, mask, W)

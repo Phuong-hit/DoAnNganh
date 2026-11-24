@@ -3,6 +3,8 @@
 
   python run_web.py                         # web tại http://127.0.0.1:5000
   python run_web.py web --host 0.0.0.0      # cho máy khác trong mạng LAN truy cập
+  python run_web.py web --host 0.0.0.0 --monitor maix://192.168.1.50
+                                            # giám sát MaixCAM ngay khi mở server -> http://<IP PC>:5000/monitor
   python run_web.py scan                    # quét data/videos -> data/metadata.csv (giống nút "Quét video")
   python run_web.py check-csv               # kiểm tra mọi CSV của cấu hình hiện tại (thoát mã 1 nếu có lỗi)
   python run_web.py extract                 # trích skeleton mọi video trong metadata (giống nút "Trích tất cả")
@@ -133,6 +135,8 @@ def main(argv=None):
     p = sub.add_parser("web", help="giao diện web (mặc định)")
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=5000)
+    p.add_argument("--monitor", default=None, metavar="SOURCE",
+                   help="giám sát ngay khi mở server, ví dụ maix://192.168.1.50 (trang /monitor)")
     sub.add_parser("scan", help="quét data/videos -> metadata.csv")
     p = sub.add_parser("check-csv", help="kiểm tra CSV cho xử lý chuỗi")
     p.add_argument("path", nargs="?", help="file hoặc thư mục CSV (mặc định: thư mục của cấu hình hiện tại)")
@@ -145,6 +149,8 @@ def main(argv=None):
     if args.cmd is None:
         args = ap.parse_args((argv or sys.argv[1:]) + ["web"])
     cfg = load_config(args.config, args.set)
+    if getattr(args, "monitor", None):
+        cfg.setdefault("monitor", {}).update(source=args.monitor, autostart=True)
     fn = {"web": cmd_web, "scan": cmd_scan, "check-csv": cmd_check, "extract": cmd_extract, "build-dataset": cmd_dataset}[args.cmd]
     return fn(cfg, args) or 0
 

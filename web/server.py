@@ -34,9 +34,12 @@ from . import csv_tools
 from .config import resolve
 from .engine import (Cancelled, OpenedSource, Stats, build_classifier, build_drawer, build_estimator,
                      build_filter, classifier_path, config_tag, csv_dir, draw_fall, draw_hud, estimate,
-                     list_checkpoints,
+                     estimate_packet,
+                     list_checkpoints, model_labels,
                      extract_to_csv, load_npz, make_video_id, npz_dir, output_dir, pose_tag,
                      predict_video)
+from .events import EventStore
+from .monitor import Monitor
 from .videos import load_metadata, scan_videos, validate
 
 ID_RE = re.compile(r"^[0-9A-Za-z_]+$")
@@ -114,7 +117,8 @@ def create_app(cfg: dict, check_model: bool = True) -> Flask:
                     arch=c.arch if c else None, threshold=c.fall_threshold if c else None,
                     window_size=c.window_size if c else None, stride_frames=c.stride_frames if c else None,
                     params=c.num_params if c else None, available=list_checkpoints(cfg),
-                    gate=c.gate.to_dict() if c else None, gate_text=c.gate.describe() if c else None)
+                    labels=model_labels(cfg),
+                    gate=c.gate.to_dict() if c else None, gate_text=(c.describe_post() or c.gate.describe()) if c else None)
 
     # ------------------------------------------------------------------ trang chính
     @app.get("/")
@@ -211,7 +215,7 @@ def create_app(cfg: dict, check_model: bool = True) -> Flask:
                 try:
                     src = OpenedSource(spec, cfg, video_id=vid)
                     me["src"] = src
-                    estimator = build_estimator(cfg)
+                    estimator = None if src.kind == "maix" else build_estimator(cfg)
                 except Exception as e:
                     state["live"] = {"error": str(e)}
                     return
@@ -234,7 +238,7 @@ def create_app(cfg: dict, check_model: bool = True) -> Flask:
                 for pkt in src.frames():
                     if me["stop"].is_set():
                         break
-                    pose, lat = estimate(estimator, flt, pkt.frame, pkt.idx, pkt.t)
+                    pose, lat = estimate_packet(estimator, flt, pkt)
                     stats.add(pose, lat)
                     _count_frame()
                     if realtime and not src.is_live:          # phát file đúng tốc độ thật
@@ -260,7 +264,7 @@ def create_app(cfg: dict, check_model: bool = True) -> Flask:
                             prev_label = res["label"]
                         if clf.last is not None:
                             fall.update(fall_gated=clf.last.get("gated", False), speed=clf.last.get("speed"),
-                                        gate_text=clf.gate.describe())
+                                        gate_text=clf.describe_post() or clf.gate.describe())
                             fall.update(fall_prob=round(clf.last["probability"], 3),
                                         fall_label=clf.last["label"])
                         fall.update(fall_hist=list(hist), fall_events=list(events))
@@ -289,7 +293,7 @@ def create_app(cfg: dict, check_model: bool = True) -> Flask:
                             events.append(dict(t=t_end, p=round(res["probability"], 3)))
                         state["live"].update(fall_prob=round(res["probability"], 3), fall_label=res["label"],
                                              fall_gated=res.get("gated", False), speed=res.get("speed"),
-                                             gate_text=clf.gate.describe(),
+                                             gate_text=clf.describe_post() or clf.gate.describe(),
                                              fall_hist=list(hist), fall_events=list(events))
                         draw_fall(last_base, res)
                         ok, jpg = cv2.imencode(".jpg", last_base, [cv2.IMWRITE_JPEG_QUALITY, 80])
@@ -581,6 +585,137 @@ def create_app(cfg: dict, check_model: bool = True) -> Flask:
     def api_jobs():
         with lock:
             return jsonify([{k: v for k, v in j.items()} for j in list(state["jobs"].values())[-10:]])
+
+    # ------------------------------------------------------------------ giám sát nền + 5 cảnh báo gần nhất
+    ecfg = cfg.setdefault("events", {})
+    mcfg = cfg.setdefault("monitor", {})
+    store = EventStore(resolve(ecfg.get("dir", "output/fall_events")),
+                       resolve(ecfg.get("saved_dir", "output/fall_events_saved")),
+                       max_events=int(ecfg.get("max_events", 5)))
+    monitor = Monitor(cfg, store, count_frame=_count_frame)
+    app.monitor, app.event_store = monitor, store          # cho test / run_web
+    rerun_cache: dict = {}
+
+    def _checkpoint_ok(ck: str | None) -> str | None:
+        """Chỉ nhận model có trong danh sách (không cho đọc file tùy ý qua API)."""
+        if not ck:
+            return None
+        ck = Path(str(ck)).as_posix()
+        if ck not in list_checkpoints(cfg):
+            abort(400, f"model không có trong danh sách: {ck}")
+        return ck
+
+    @app.get("/monitor")
+    def monitor_page():
+        return render_template("monitor.html", edges=[list(e) for e in SKELETON_EDGES], draw_conf=draw_conf,
+                               default_source=mcfg.get("source") or "", filter_on=filter_default,
+                               checkpoints=list_checkpoints(cfg), labels=model_labels(cfg), clf_selected=_clf_info()["selected"],
+                               max_events=store.max_events, pre_s=ecfg.get("pre_s", 6), post_s=ecfg.get("post_s", 5))
+
+    @app.get("/monitor/stream")
+    def monitor_stream():
+        def gen():
+            for jpg in monitor.frames():
+                yield b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + jpg + b"\r\n"
+        return Response(gen(), mimetype="multipart/x-mixed-replace; boundary=frame",
+                        headers={"Cache-Control": "no-cache"})
+
+    @app.get("/api/monitor")
+    def api_monitor():
+        return jsonify(monitor.status())
+
+    @app.post("/api/monitor/start")
+    def api_monitor_start():
+        body = request.get_json(silent=True) or {}
+        try:
+            monitor.start(body.get("source") or mcfg.get("source"), checkpoint=_checkpoint_ok(body.get("checkpoint")),
+                          use_filter=body.get("filter"), show_skeleton=body.get("skeleton", True))
+        except ModuleNotFoundError as e:
+            return jsonify(ok=False, error=f"chưa cài {e.name}"), 400
+        except Exception as e:
+            return jsonify(ok=False, error=str(e)), 400
+        return jsonify(ok=True, **monitor.status())
+
+    @app.post("/api/monitor/stop")
+    def api_monitor_stop():
+        monitor.stop(wait=5.0)
+        return jsonify(ok=True)
+
+    @app.get("/api/events")
+    def api_events():
+        return jsonify(store.list())
+
+    @app.get("/api/events/<eid>")
+    def api_event(eid):
+        ev = store.get(eid)
+        if ev is None:
+            abort(404)
+        return jsonify(ev)
+
+    @app.get("/events/<eid>/frame/<int:n>.jpg")
+    def event_frame(eid, n):
+        p = store.frame_path(eid, n)
+        if p is None:
+            abort(404)
+        return send_file(p, mimetype="image/jpeg", max_age=3600)
+
+    @app.get("/events/<eid>/thumb.jpg")
+    def event_thumb(eid):
+        p = store.thumb_path(eid)
+        if p is None:
+            abort(404)
+        return send_file(p, mimetype="image/jpeg", max_age=3600)
+
+    @app.post("/api/events/<eid>/label")
+    def api_event_label(eid):
+        body = request.get_json(silent=True) or {}
+        try:
+            m = store.set_label(eid, body.get("label"), body.get("note"))
+        except ValueError as e:
+            return jsonify(ok=False, error=str(e)), 400
+        if m is None:
+            abort(404)
+        return jsonify(ok=True, meta=m)
+
+    @app.post("/api/events/<eid>/keep")
+    def api_event_keep(eid):
+        body = request.get_json(silent=True) or {}
+        if not store.keep(eid, bool(body.get("keep", True))):
+            abort(404)
+        return jsonify(ok=True)
+
+    @app.delete("/api/events/<eid>")
+    def api_event_delete(eid):
+        if not store.delete(eid):
+            abort(404)
+        return jsonify(ok=True)
+
+    @app.post("/api/events/<eid>/rerun")
+    def api_event_rerun(eid):
+        """Chạy lại chuỗi khung xương đã lưu bằng model khác -> P(ngã) theo thời gian để so trên biểu đồ."""
+        body = request.get_json(silent=True) or {}
+        ck = _checkpoint_ok(body.get("checkpoint"))
+        if not ck:
+            return jsonify(ok=False, error="chưa chọn model"), 400
+        item = store.as_item(eid)
+        if item is None:
+            abort(404)
+        try:
+            clf = rerun_cache.get(ck)
+            if clf is None:
+                clf = build_classifier({**cfg, "classifier": {**cfg["classifier"], "checkpoint": ck}})
+                rerun_cache.clear()                  # chỉ giữ một model, tránh tốn RAM/GPU
+                rerun_cache[ck] = clf
+            return jsonify(ok=True, checkpoint=ck, **predict_video(clf, item))
+        except Exception as e:
+            return jsonify(ok=False, error=str(e)), 400
+
+    if mcfg.get("autostart") and mcfg.get("source"):
+        try:
+            monitor.start(mcfg["source"], checkpoint=mcfg.get("checkpoint"))
+        except Exception as e:                       # sai model / chưa cài torch: web vẫn chạy, báo trên trang
+            monitor.state.update(status="error", error=str(e))
+            print(f"[monitor] không tự chạy được giám sát: {e}")
 
     # ------------------------------------------------------------------ tải về
     def _existing_csv(video_id: str) -> Path:
