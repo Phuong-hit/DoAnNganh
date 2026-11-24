@@ -18,7 +18,7 @@ Khác bản gốc (kchengiva/Shift-GCN):
 Dùng:
     from src.model_shiftgcn import Model
     model = Model(num_class=2, num_point=17, num_frames=17)
-    logits = model(x)                      # x: [N, 3, 10, 17]
+    logits = model(x)                      # x: [N, 3, 17, 17]
 
 Chạy thử:  python model_shiftgcn.py
 """
@@ -32,9 +32,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-# ----------------------------------------------------------------------
-# Bảng chỉ số (thuần numpy, kiểm tra riêng được)
-# ----------------------------------------------------------------------
+
 def spatial_shift_index(num_nodes, channels, inverse=False):
     """Chỉ số dịch theo KHÔNG GIAN trên vector phẳng độ dài nút*kênh (thứ tự: nút, rồi kênh).
 
@@ -73,9 +71,7 @@ def temporal_shift_tables(channels, num_frames, kernel=3, reverse=False):
     return idx.reshape(-1), valid.reshape(-1)
 
 
-# ----------------------------------------------------------------------
-# Các khối
-# ----------------------------------------------------------------------
+
 class SpatialShiftGCN(nn.Module):
     """Shift graph convolution theo không gian (non-local): dịch -> mặt nạ -> 1x1 -> dịch ngược."""
 

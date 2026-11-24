@@ -29,7 +29,7 @@ import torch
 
 from .features import normalize_clip
 from .skeleton_io import from_poses
-from .model_shiftgcn import Model
+from .model_shiftgcn_4 import Model
 
 
 class ShiftGCNInference:
