@@ -4,7 +4,8 @@ fall_postprocess.py
 Thuật toán hậu xử lý xác suất ngã của nhánh `final` (main.py: FallPostProcessor), tách ra để web / monitor /
 chạy offline dùng chung với FallClassifier (src/classifier.py, mục `classifier.postprocess` trong configs/web.yaml).
 
-  1. Kích hoạt NGÃ khi P(ngã) >= threshold liên tiếp consec_frames lần.
+  1. Kích hoạt NGÃ khi P(ngã) >= threshold liên tiếp consec_frames lần (và, nếu bật speed_gate, cửa sổ có
+     chuyển động nhanh: vai hạ / thân xoay đủ nhanh -> nằm xuống chậm không kích hoạt; thêm so với final).
   2. Giữ cảnh báo chừng nào người chưa đứng thẳng hoàn toàn (cả thân trên lẫn chân).
   3. Xả bộ đếm nhanh (-3 mỗi khung) khi đã đứng thẳng dậy.
 
@@ -56,16 +57,22 @@ def is_standing_upright(seq, mask, aspect: float = 1.0) -> bool:
 
 
 class FallPostProcessor:
-    def __init__(self, threshold=0.7, consec_frames=1, hold_frames=10):
+    def __init__(self, threshold=0.7, consec_frames=1, hold_frames=10, max_hold_frames=None):
+        """max_hold_frames (thêm so với final): đang giữ cảnh báo mà P(ngã) < ngưỡng liên tục N khung thì nhả,
+        kể cả khi không xác nhận được người đã đứng thẳng (camera chỉ thấy nửa trên -> bản final kẹt NGÃ mãi).
+        None = đúng hành vi nhánh final."""
         self.threshold = threshold
         self.consec_frames = consec_frames
         self.hold_frames = hold_frames
+        self.max_hold_frames = max_hold_frames
         self.streak = 0
         self.hold_counter = 0
+        self.low_in_hold = 0
 
-    def update_arrays(self, raw_prob, seq=None, mask=None, aspect=1.0) -> bool:
-        """Như update() nhưng nhận seq [17,3] / mask [17] của khung hiện tại (None = không thấy người)."""
-        if raw_prob >= self.threshold:
+    def update_arrays(self, raw_prob, seq=None, mask=None, aspect=1.0, fast=True) -> bool:
+        """Như update() nhưng nhận seq [17,3] / mask [17] của khung hiện tại (None = không thấy người).
+        fast=False: cửa sổ chuyển động chậm (cổng tốc độ) -> không được KÍCH HOẠT cảnh báo (vẫn giữ nếu đang báo)."""
+        if raw_prob >= self.threshold and fast:
             self.streak += 1
         else:
             self.streak = 0
@@ -74,20 +81,27 @@ class FallPostProcessor:
             self.hold_counter = self.hold_frames
 
         if self.hold_counter > 0:
+            self.low_in_hold = self.low_in_hold + 1 if raw_prob < self.threshold else 0
+            if self.max_hold_frames and self.low_in_hold >= self.max_hold_frames:
+                self.hold_counter = 0                  # model đã "bình thường" đủ lâu -> nhả cảnh báo
+                self.low_in_hold = 0
+                return False
             upright = seq is not None and mask is not None and is_standing_upright(seq, mask, aspect)
             if upright:
                 self.hold_counter = max(0, self.hold_counter - 3)
             else:
                 self.hold_counter = max(self.hold_counter, 3)
             return True
+        self.low_in_hold = 0
         return False
 
-    def update(self, raw_prob, current_pose=None, aspect=1.0) -> bool:
+    def update(self, raw_prob, current_pose=None, aspect=1.0, fast=True) -> bool:
         if current_pose is None or not getattr(current_pose, "valid", False):
-            return self.update_arrays(raw_prob, None, None, aspect)
+            return self.update_arrays(raw_prob, None, None, aspect, fast)
         item = from_poses([current_pose])
-        return self.update_arrays(raw_prob, item["seq"][0], item["mask"][0], aspect)
+        return self.update_arrays(raw_prob, item["seq"][0], item["mask"][0], aspect, fast)
 
     def reset(self):
         self.streak = 0
         self.hold_counter = 0
+        self.low_in_hold = 0

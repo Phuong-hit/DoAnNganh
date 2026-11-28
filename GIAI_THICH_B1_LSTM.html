@@ -1,0 +1,436 @@
+<title>Thuật toán B1 LSTM</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Literata:opsz,wght@7..72,400;7..72,600;7..72,700&display=swap" rel="stylesheet">
+<style>
+/* VOICE work: tài liệu kỹ thuật cho nhóm đồ án, đọc để hiểu và trình bày
+   IDEA một bản vẽ khoa học: mỗi bước của thuật toán là một hình có chú thích
+   PICTURE dải thời gian cú ngã: tư thế người, các cửa sổ 17 khung, P(ngã) và cổng tốc độ
+   COLOUR nền trắng, mực #10131a, xanh prussian dẫn dắt, đỏ carmine cho NGÃ
+   TYPE Literata cho tiêu đề và chữ
+   LAYOUT tiêu đề và kết luận phía trên, hình lớn tràn ngang; từng mục: chữ bên trái, hình bên phải; điện thoại xếp dọc */
+:root{color-scheme:light dark;--bg:light-dark(#ffffff,#0f1217);--ink:light-dark(#10131a,#e8ebf0);--soft:light-dark(#5a6170,#9aa3b2);--rule:light-dark(#d9dce2,#2c323c);--tint:light-dark(#f4f6f9,#161b23);--blue:light-dark(#0b4f8a,#79b0e6);--red:light-dark(#c1121f,#ff6f6f);--blueT:light-dark(#dce8f4,#1a2c40);--redT:light-dark(#f8dfe1,#3a1c20);--stand:light-dark(#b9bfc9,#4a5260)}
+:root[data-theme=light]{color-scheme:light}
+:root[data-theme=dark]{color-scheme:dark}
+*{box-sizing:border-box;min-width:0}
+body{background:var(--bg);color:var(--ink);font:16.5px/1.6 Literata,Georgia,serif;overflow-x:clip;margin:0}
+.band{padding-block:clamp(24px,4vw,56px);padding-left:max(5vw,16px,env(safe-area-inset-left,0px));padding-right:max(5vw,16px,env(safe-area-inset-right,0px))}
+.wrap{max-width:1240px;margin:0 auto}
+h1{font-size:clamp(32px,5vw,50px);line-height:1.05;letter-spacing:-.02em;margin:0 0 14px;font-weight:700}
+h2{font-size:clamp(24px,3vw,32px);line-height:1.15;letter-spacing:-.015em;margin:0 0 12px;font-weight:600}
+h3{font-size:18px;margin:22px 0 6px;font-weight:600}
+p{margin:0 0 12px;max-width:68ch}
+.lede{font-size:19px;max-width:62ch}
+.note{color:var(--soft);font-size:14px}
+code{font-family:ui-monospace,Consolas,monospace;font-size:.88em;background:var(--tint);padding:1px 5px;border-radius:3px;overflow-wrap:anywhere}
+.fig{position:relative;width:100%}
+.fig>svg{display:block;width:100%;height:100%}
+svg text{font-family:Literata,Georgia,serif;font-size:14px;fill:var(--ink);paint-order:stroke;stroke:var(--bg);stroke-width:4px;stroke-linejoin:round}
+svg text.sm{font-size:13px;fill:var(--soft)}
+svg text.b{font-weight:700}
+.legend{display:flex;flex-wrap:wrap;gap:6px 18px;font-size:14px;color:var(--soft);margin-top:8px}
+.legend i{display:inline-block;width:12px;height:12px;border-radius:2px;margin-right:6px;vertical-align:-1px}
+.sec{border-top:1px solid var(--rule)}
+.two{display:grid;gap:clamp(20px,3vw,48px);grid-template-columns:minmax(0,1fr)}
+@media(min-width:900px){.two{grid-template-columns:minmax(0,5fr) minmax(0,7fr);align-items:start}}
+.panel{background:var(--tint);border:1px solid var(--rule);border-radius:6px;padding:14px}
+.step{display:flex;gap:12px;margin:10px 0}
+.step b.n{flex:none;width:28px;height:28px;border-radius:50%;background:var(--blue);color:var(--bg);display:grid;place-items:center;font-size:14px}
+.rows{display:grid;gap:2px}
+.row{display:grid;grid-template-columns:minmax(0,11em) minmax(0,8em) minmax(0,1fr) 5.5em;gap:10px;align-items:center;padding:8px 0;border-bottom:1px solid var(--rule);font-size:15px}
+.row .bar{height:12px;background:var(--blue);border-radius:2px}
+.row .num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.row.head{color:var(--soft);font-size:13px}
+.row.tot{font-weight:700;border-bottom:none}
+@media(max-width:600px){.row{grid-template-columns:minmax(0,1fr) 5.5em;}.row .shape,.row .barc{display:none}}
+.eq{font-family:ui-monospace,Consolas,monospace;font-size:14px;background:var(--tint);border-left:3px solid var(--blue);padding:12px 14px;line-height:1.9;overflow-x:auto;white-space:pre}
+.cms{display:grid;grid-template-columns:repeat(auto-fit,minmax(13em,1fr));gap:16px}
+.cm h4{margin:0 0 6px;font-size:15px}
+.cm .g{display:grid;grid-template-columns:auto 1fr 1fr;gap:3px;font-size:14px}
+.cm .g div{padding:8px 6px;text-align:center;font-variant-numeric:tabular-nums}
+.cm .ok{background:var(--blueT)}
+.cm .bad{background:var(--redT);color:var(--red);font-weight:700}
+.cm .lab{color:var(--soft);font-size:13px;text-align:left!important}
+.scroll{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:15px}
+th,td{padding:8px 10px;border-bottom:1px solid var(--rule);text-align:left;vertical-align:top}
+th{color:var(--soft);font-weight:600;font-size:13.5px}
+td.n,th.n{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+tr.hl td{background:var(--blueT);font-weight:600}
+.big{display:grid;grid-template-columns:repeat(auto-fit,minmax(9em,1fr));gap:12px;margin:18px 0 4px}
+.big div{border-top:2px solid var(--ink);padding-top:6px}
+.big b{display:block;font-size:clamp(26px,3.4vw,36px);line-height:1.1;font-variant-numeric:tabular-nums}
+.big span{font-size:14px;color:var(--soft)}
+ul{padding-left:20px;margin:0 0 12px;max-width:68ch}
+li{margin:4px 0}
+@media(max-width:600px){table{font-size:13px}th,td{padding:6px 4px}.stack thead{display:none}.stack tr{display:grid;padding-block:10px;border-bottom:1px solid var(--rule)}.stack td{display:flex;justify-content:space-between;gap:12px;border:none;padding:3px 0}.stack td::before{content:attr(data-l);color:var(--soft)}}
+</style>
+
+<header class="band"><div class="wrap">
+<h1>B1 LSTM: phát hiện ngã từ 1,7 giây khung xương</h1>
+<p class="lede">B1 đọc 17 khung skeleton liên tiếp, tự tính thêm vận tốc của từng khớp và cho mạng LSTM hai tầng đọc theo thời gian để ra P(ngã). Kết quả chỉ là <b style="color:var(--red)">NGÃ</b> khi P(ngã) ≥ 0,83 <b>và</b> người đó tụt xuống hoặc xoay người đủ nhanh. Nhờ vậy, việc nằm xuống chậm không bị báo nhầm.</p>
+<div class="fig" id="heroBox"><svg id="hero" role="img" aria-label="Dải thời gian một cú ngã: tư thế, cửa sổ 17 khung, P(ngã) và cổng tốc độ"></svg></div>
+<div class="legend"><span><i style="background:var(--stand)"></i>đứng</span><span><i style="background:var(--red)"></i>đang ngã (khung 14–20)</span><span><i style="background:var(--ink);opacity:.6"></i>nằm</span><span><i style="background:var(--blueT);border:1px solid var(--blue)"></i>cửa sổ 17 khung, cứ 5 khung dự đoán một lần</span></div>
+<p class="note" style="margin-top:8px">Hình minh họa: các giá trị P(ngã) là ví dụ để thấy cách thuật toán chạy, không phải số đo. Ở cửa sổ cuối (khung 21–37) cú ngã đã nằm ngoài cửa sổ: P vẫn cao vì người đang nằm, nhưng vai không còn tụt nhanh nên cổng tốc độ chặn lại.</p>
+</div></header>
+
+<section class="band sec"><div class="wrap two">
+<div>
+<h2>1. Toàn bộ đường đi của một khung hình</h2>
+<p>Mã nguồn: <code>src/classifier.py</code> (FallClassifier), <code>src/model_lstm.py</code> (mạng), <code>src/features.py</code> (chuẩn hóa), <code>src/motion.py</code> (cổng tốc độ). Checkpoint: <code>models/b1_lstm.pt</code>.</p>
+<p>Tên “B1” là phương án số 1 của nhóm (B0 = luật, B1 = LSTM, B2 = Shift-GCN), không phải “Bi-LSTM”. Bản đang dùng là LSTM <b>một chiều</b>.</p>
+</div>
+<div class="panel">
+<div class="step"><b class="n">1</b><div><b>YOLO-pose</b> cho 17 khớp COCO (x, y, độ tin cậy) mỗi khung, 10 khung/giây.</div></div>
+<div class="step"><b class="n">2</b><div><b>Bộ đệm trượt</b> <code>deque(maxlen=17)</code>. Đủ 17 khung thì cứ 5 khung mới dự đoán một lần.</div></div>
+<div class="step"><b class="n">3</b><div><b>Chuẩn hóa</b> cả cửa sổ: dời gốc về tâm hông, chia cho độ dài xương trung vị. Ra tensor [17 khung × 17 khớp × (x, y, mask)].</div></div>
+<div class="step"><b class="n">4</b><div><b>Mạng LSTM</b> tính vận tốc, nén từng khung, đọc 17 khung rồi ra 2 logits.</div></div>
+<div class="step"><b class="n">5</b><div><b>Softmax</b> cho P(ngã). So với <b>ngưỡng 0,83</b>.</div></div>
+<div class="step"><b class="n">6</b><div><b>Cổng tốc độ</b>: vai tụt ≥ 1,6 thân/s hoặc thân xoay ≥ 70°/s thì xác nhận NGÃ.</div></div>
+</div>
+</div></section>
+
+<section class="band sec"><div class="wrap two">
+<div>
+<h2>2. Chuẩn hóa: bỏ vị trí và kích thước, giữ lại chuyển động</h2>
+<p>Cùng một cú ngã, người đứng gần hay xa camera, ở góc trái hay góc phải ảnh, phải cho ra cùng một chuỗi số. <code>normalize_clip</code> làm 4 việc:</p>
+<ul>
+<li>Nhân x với tỉ lệ khung hình (<code>aspect</code>) để sửa méo.</li>
+<li><b>Dời gốc</b> về trung bình hai hông (khớp 11, 12). Nếu không thấy hông thì dùng trung bình mọi khớp.</li>
+<li><b>Chia tỉ lệ</b> cho trung vị độ dài các xương quan sát được. Đơn vị đo mới là “một đoạn xương” của chính người đó.</li>
+<li>Khớp không thấy được gán 0, kênh thứ ba <code>mask</code> = 0.</li>
+</ul>
+<p>Tâm và tỉ lệ được tính <b>một lần cho cả 17 khung</b>, không tính lại từng khung. Nếu tính lại từng khung, hông luôn nằm ở gốc và cú tụt người biến mất khỏi dữ liệu.</p>
+</div>
+<div class="fig"><svg id="normFig" viewBox="0 0 760 320" role="img" aria-label="Skeleton trước và sau chuẩn hóa"></svg></div>
+</div></section>
+
+<section class="band sec"><div class="wrap two">
+<div>
+<h2>3. Vận tốc được tính ngay bên trong model</h2>
+<p>Ngoài (x, y, mask), model tự tính <b>dx, dy</b> của mỗi khớp giữa khung t−1 và khung t (<code>model_lstm.py</code>, dòng 77–82). Vận tốc chỉ được tính khi khớp thấy được ở <b>cả hai</b> khung, còn lại bằng 0, để khớp “nhảy” do mất dấu không bị coi là chuyển động.</p>
+<p>Mỗi khung trở thành một vector <b>17 khớp × 5 kênh = 85 số</b>. Vì vận tốc được tính từ chính đầu vào, dataset, web và FallClassifier không phải thay đổi gì.</p>
+<p class="note">LSTM không biết khớp nào nối với khớp nào. Nó chỉ thấy 85 con số và phải tự học quan hệ giữa chúng. Shift-GCN (B2) thì biết đồ thị khung xương.</p>
+</div>
+<div class="fig"><svg id="velFig" viewBox="0 0 760 300" role="img" aria-label="Vận tốc khớp giữa hai khung và vector 85 đặc trưng"></svg></div>
+</div></section>
+
+<section class="band sec"><div class="wrap two">
+<div>
+<h2>4. Kiến trúc: 275 884 tham số, phần lớn nằm ở hai tầng LSTM</h2>
+<p>Tensor đi qua mạng như sau (N là số cửa sổ trong một batch):</p>
+<div class="eq">[N, 3, 17, 17]   đầu vào chung (C, T, V)
+→ [N, 17, 85]    duỗi phẳng + vận tốc
+→ BatchNorm1d(85)
+→ Linear 85→128, ReLU, Dropout 0,5
+→ LSTM 2 tầng, hidden 128 → [N, 17, 128]
+→ ghép [trung bình theo thời gian, khung cuối] → [N, 256]
+→ Dropout 0,5 → Linear 256→2 → logits</div>
+<p class="note" style="margin-top:10px">Có Dropout 0,5 ở ba chỗ: sau lớp nén khung, giữa hai tầng LSTM và trước lớp cuối. Dropout cao được chọn vì dữ liệu ít, để giảm học thuộc.</p>
+</div>
+<div>
+<div class="rows" id="arch"></div>
+<p class="note" style="margin-top:8px">Số tham số được tính từ kích thước lớp và khớp với <code>"params": 275884</code> trong <code>models/b1_lstm.report.json</code>. ST-GCN có khoảng 3 triệu tham số.</p>
+</div>
+</div></section>
+
+<section class="band sec"><div class="wrap two">
+<div>
+<h2>5. Bên trong một ô LSTM</h2>
+<p>Ở mỗi khung t, ô LSTM nhận vector khung <b>x<sub>t</sub></b> (128 số) và trạng thái của khung trước (<b>h<sub>t−1</sub></b>, <b>c<sub>t−1</sub></b>). Ba cổng sigmoid điều khiển bộ nhớ <b>c</b>:</p>
+<div class="eq">f = σ(W_f·[h_{t-1}, x_t] + b_f)   cổng quên
+i = σ(W_i·[h_{t-1}, x_t] + b_i)   cổng vào
+g = tanh(W_g·[h_{t-1}, x_t] + b_g) nội dung mới
+o = σ(W_o·[h_{t-1}, x_t] + b_o)   cổng ra
+c_t = f ⊙ c_{t-1} + i ⊙ g
+h_t = o ⊙ tanh(c_t)</div>
+<p style="margin-top:12px">Đường <b>c</b> chạy ngang qua 17 khung và chỉ bị nhân hoặc cộng nhẹ, nên model nhớ được chuỗi kiểu “đang đứng → vai tụt nhanh → thân nằm ngang”. Đây là thứ mà một ảnh tĩnh không cho biết.</p>
+<p class="note">Mỗi tầng có 4 × (128×128 + 128×128 + 2×128) = 132 096 tham số.</p>
+</div>
+<div class="fig"><svg id="cellFig" viewBox="0 0 760 330" role="img" aria-label="Sơ đồ ô LSTM với cổng quên, vào, ra"></svg></div>
+</div></section>
+
+<section class="band sec"><div class="wrap two">
+<div>
+<h2>6. Trải 17 khung và gộp thành một quyết định</h2>
+<p>Hai tầng LSTM chồng lên nhau: tầng 1 đọc chuỗi vector khung, tầng 2 đọc chuỗi đầu ra của tầng 1. Sau khung 17, ta có 17 vector <b>h</b>, mỗi vector 128 số.</p>
+<p>Model gộp chúng theo hai cách rồi ghép lại thành 256 số:</p>
+<ul>
+<li><b>Trung bình theo thời gian</b>: cả cửa sổ trông như thế nào.</li>
+<li><b>Trạng thái khung cuối</b>: cửa sổ kết thúc ra sao, sau khi đã “đọc” hết.</li>
+</ul>
+<p>Lớp Linear 256→2 ra logits, rồi softmax: <code>P(ngã) = softmax(logits)[1]</code>.</p>
+</div>
+<div class="fig"><svg id="unrollFig" viewBox="0 0 760 330" role="img" aria-label="LSTM trải qua 17 khung, gộp trung bình và khung cuối"></svg></div>
+</div></section>
+
+<section class="band sec"><div class="wrap two">
+<div>
+<h2>7. Ngưỡng 0,83 được chọn trên tập val, không nhìn test</h2>
+<p><code>best_threshold</code> thử các ngưỡng từ 0,05 đến 0,95 (bước 0,01) trên tập <b>val</b> và lấy ngưỡng cho F1 lớp ngã cao nhất. Nếu hòa thì lấy ngưỡng gần 0,5 nhất. Ngưỡng được lưu trong checkpoint, FallClassifier tự đọc.</p>
+<p>Trên val, nâng ngưỡng từ 0,5 lên 0,83 giảm báo nhầm từ 11 xuống 6 cửa sổ, đổi lại bỏ sót thêm 2 cửa sổ ngã. F1 tăng từ 0,965 lên 0,972.</p>
+</div>
+<div class="cms" id="cms"></div>
+</div></section>
+
+<section class="band sec"><div class="wrap two">
+<div>
+<h2>8. Cổng tốc độ: ngã nhanh, nằm xuống chậm</h2>
+<p><code>motion_features</code> đo trên cửa sổ đã chuẩn hóa (đơn vị “thân” = độ dài xương trung vị), tốc độ lấy trung bình qua 3 khung (0,3 giây) để bớt nhiễu:</p>
+<ul>
+<li><b>shoulder_drop</b>: tốc độ tụt lớn nhất của trung điểm hai vai (thân/giây).</li>
+<li><b>rotation</b>: tốc độ xoay lớn nhất của thân từ đứng sang nằm (độ/giây). Góc thân = góc của vector hông → vai so với phương thẳng đứng.</li>
+</ul>
+<div class="eq">NGÃ ⇔ P(ngã) ≥ 0,83
+      VÀ (vai tụt ≥ 1,6 thân/s HOẶC xoay ≥ 70°/s)</div>
+<p style="margin-top:12px">Checkpoint không có ngoại lệ “P rất cao thì bỏ qua cổng” (<code>keep_if_p_above: null</code>). Hai ngưỡng 1,6 và 70 trùng với giới hạn tốc độ dùng khi tạo mẫu “nằm xuống chậm” ở mục 9.</p>
+<p class="note">Hạn chế: camera 2D chỉ thấy chuyển động trong mặt phẳng ảnh. Cú ngã hướng thẳng về phía camera có tốc độ đo được thấp và có thể bị chặn nhầm.</p>
+</div>
+<div class="fig"><svg id="gateFig" viewBox="0 0 760 400" role="img" aria-label="Mặt phẳng tốc độ vai và tốc độ xoay với vùng bị chặn"></svg></div>
+</div></section>
+
+<section class="band sec"><div class="wrap two">
+<div>
+<h2>9. Dữ liệu: dạy model rằng nằm không phải là ngã</h2>
+<p>Dataset gốc <code>datasetv1.npz</code> có 67% cửa sổ NGÃ là tư thế nằm, nhưng tập train chỉ có 32 cửa sổ nằm mà không ngã và 0 cửa sổ nằm yên. Model vì thế học sai thành “nằm = ngã”.</p>
+<p><code>build_lying_negatives.py</code> tạo thêm <b>mẫu âm (nhãn 0)</b> từ chính các cửa sổ ngã trong <b>cùng split</b>, nên không rò rỉ người giữa train, val và test:</p>
+<ul>
+<li><b>still</b>: giữ nguyên tư thế cuối của cú ngã và thêm rung nhẹ (người nằm yên).</li>
+<li><b>slow</b>: kéo giãn cú ngã theo thời gian thành động tác nằm xuống chậm. Chỉ giữ mẫu có vai tụt &lt; 1,6 thân/s và xoay &lt; 70°/s.</li>
+<li>Khoảng 20% số mẫu bị che cả một nhóm khớp (hông, vai hoặc chân), giống chăn hay giường che người.</li>
+</ul>
+<p>Kết quả là <code>data/datasetv1_lying.npz</code>. Các cửa sổ gốc được giữ nguyên.</p>
+</div>
+<div class="fig"><svg id="lyFig" viewBox="0 0 760 300" role="img" aria-label="Độ cao vai theo thời gian của mẫu ngã, nằm chậm và nằm yên"></svg></div>
+</div></section>
+
+<section class="band sec"><div class="wrap two">
+<div>
+<h2>10. Huấn luyện và chọn model</h2>
+<p><code>tune_b1.py</code> train nhiều cấu hình × nhiều seed trên cùng dataset, <b>chọn theo val</b>, rồi chép bản thắng thành <code>models/b1_lstm.pt</code>. Bản được chọn là <code>drop5_s42</code> (dropout 0,5, seed 42).</p>
+<div class="big"><div><b>33</b><span>epoch tốt nhất (chạy đến 48)</span></div><div><b>0,77</b><span>phút train trên GPU</span></div><div><b>17</b><span>khung mỗi cửa sổ, 10 fps</span></div></div>
+</div>
+<div class="scroll"><table class="stack">
+<thead><tr><th>Thành phần</th><th>Giá trị</th><th>Ý nghĩa</th></tr></thead>
+<tbody>
+<tr><td data-l="Thành phần">Hàm mất mát</td><td data-l="Giá trị">CrossEntropy có trọng số lớp</td><td data-l="Ý nghĩa">Trọng số tính từ tập train để cân bằng NGÃ và KHÔNG NGÃ</td></tr>
+<tr><td data-l="Thành phần">Tối ưu</td><td data-l="Giá trị">AdamW, lr 0,001, weight decay 0,0001</td><td data-l="Ý nghĩa">Weight decay phạt trọng số lớn</td></tr>
+<tr><td data-l="Thành phần">Lịch học</td><td data-l="Giá trị">CosineAnnealing, T_max 60</td><td data-l="Ý nghĩa">lr giảm dần theo đường cos</td></tr>
+<tr><td data-l="Thành phần">Batch, epoch</td><td data-l="Giá trị">32, tối đa 60</td><td data-l="Ý nghĩa"></td></tr>
+<tr><td data-l="Thành phần">Dừng sớm</td><td data-l="Giá trị">patience 15</td><td data-l="Ý nghĩa">15 epoch liên tiếp val không tốt hơn thì dừng, giữ epoch tốt nhất</td></tr>
+<tr><td data-l="Thành phần">Tăng cường</td><td data-l="Giá trị">lật ngang p = 0,5; nhiễu σ = 0,01</td><td data-l="Ý nghĩa">Ngã sang trái và sang phải là như nhau; skeleton thật luôn rung</td></tr>
+<tr><td data-l="Thành phần">Ngưỡng</td><td data-l="Giá trị">0,83</td><td data-l="Ý nghĩa">Chọn trên val (mục 7)</td></tr>
+<tr><td data-l="Thành phần">Cổng tốc độ</td><td data-l="Giá trị">vai 1,6 thân/s, xoay 70°/s</td><td data-l="Ý nghĩa">Lưu trong checkpoint (mục 8)</td></tr>
+</tbody></table></div>
+</div></section>
+
+<section class="band sec"><div class="wrap">
+<h2>11. Kết quả</h2>
+<p>Lấy từ <code>models/b1_lstm.report.json</code> (ngưỡng 0,83) và README mục 10.</p>
+<div class="big"><div><b>0,986</b><span>F1 test theo cửa sổ</span></div><div><b>0,999</b><span>AUC test</span></div><div><b>81/82</b><span>video ngã bắt được (test)</span></div><div><b>2/118</b><span>video sinh hoạt báo nhầm (test)</span></div><div><b>1,6 ms</b><span>mỗi cửa sổ trên CPU</span></div></div>
+<div class="two" style="margin-top:24px">
+<div class="scroll"><table class="stack">
+<thead><tr><th>Tập</th><th class="n">Acc</th><th class="n">Prec</th><th class="n">Recall</th><th class="n">F1</th></tr></thead>
+<tbody>
+<tr><td data-l="Tập">Val, ngưỡng 0,5</td><td class="n" data-l="Acc">0,982</td><td class="n" data-l="Prec">0,950</td><td class="n" data-l="Recall">0,981</td><td class="n" data-l="F1">0,965</td></tr>
+<tr><td data-l="Tập">Val, ngưỡng 0,83</td><td class="n" data-l="Acc">0,986</td><td class="n" data-l="Prec">0,972</td><td class="n" data-l="Recall">0,972</td><td class="n" data-l="F1">0,972</td></tr>
+<tr><td data-l="Tập">Test cửa sổ, 0,83</td><td class="n" data-l="Acc">0,987</td><td class="n" data-l="Prec">0,988</td><td class="n" data-l="Recall">0,984</td><td class="n" data-l="F1">0,986</td></tr>
+<tr><td data-l="Tập">Test theo video (200)</td><td class="n" data-l="Acc">0,985</td><td class="n" data-l="Prec">0,976</td><td class="n" data-l="Recall">0,988</td><td class="n" data-l="F1">0,982</td></tr>
+</tbody></table></div>
+<div class="scroll"><table class="stack">
+<thead><tr><th>Model</th><th class="n">F1 v1_test</th><th class="n">F1 v1_lying</th><th class="n">ms/cửa sổ</th><th class="n">Video nhóm: ADL báo nhầm</th></tr></thead>
+<tbody>
+<tr><td data-l="Model">B0 luật</td><td class="n" data-l="F1 v1_test">0,923</td><td class="n" data-l="F1 v1_lying">0,906</td><td class="n" data-l="ms/cửa sổ">0,2</td><td class="n" data-l="ADL báo nhầm">3/5</td></tr>
+<tr class="hl"><td data-l="Model">B1 LSTM</td><td class="n" data-l="F1 v1_test">0,979</td><td class="n" data-l="F1 v1_lying">0,979</td><td class="n" data-l="ms/cửa sổ">1,6</td><td class="n" data-l="ADL báo nhầm">1/5</td></tr>
+<tr><td data-l="Model">B2 Shift-GCN</td><td class="n" data-l="F1 v1_test">0,984</td><td class="n" data-l="F1 v1_lying">0,907</td><td class="n" data-l="ms/cửa sổ">3,2</td><td class="n" data-l="ADL báo nhầm">4/5</td></tr>
+</tbody></table></div>
+</div>
+<h3>Cần nói rõ khi báo cáo</h3>
+<ul>
+<li>Bộ <code>v1_lying</code> dùng cùng cách tạo mẫu nằm như lúc train B1, nên có lợi cho B1. Với 9 video quay riêng của nhóm (5 sinh hoạt, 4 ngã), B1 bắt được 4/4 video ngã nhưng vẫn báo nhầm 1/5 video sinh hoạt.</li>
+<li>Các số đo ở trên là trên dữ liệu cùng phân phối với lúc train. Camera, góc quay hoặc model pose khác có thể làm kết quả giảm.</li>
+<li>Docstring trong <code>model_lstm.py</code> ghi T = 20, nhưng checkpoint thực tế dùng cửa sổ <b>17 khung</b> (<code>window_size: 17</code>).</li>
+<li>Trên web, B1 dự đoán mỗi 5 khung (khoảng 2 lần/giây) và không dùng hậu xử lý kiểu nhánh final như Shift-GCN.</li>
+</ul>
+</div></section>
+
+<script>
+{
+const $=id=>document.getElementById(id);
+const P0=[[0,-1.7],[-.07,-1.78],[.07,-1.78],[-.15,-1.72],[.15,-1.72],[-.4,-1.4],[.4,-1.4],[-.5,-.95],[.5,-.95],[-.55,-.5],[.55,-.5],[-.25,-.45],[.25,-.45],[-.27,.4],[.27,.4],[-.28,1.2],[.28,1.2]];
+const BONES=[[5,6],[5,7],[7,9],[6,8],[8,10],[5,11],[6,12],[11,12],[11,13],[13,15],[12,14],[14,16],[0,1],[0,2],[1,3],[2,4],[0,5],[0,6]];
+const pose=(a,base=P0)=>{const r=a*Math.PI/180,c=Math.cos(r),s=Math.sin(r);return base.map(([x,y])=>{const dx=x,dy=y-1.2;return[dx*c-dy*s,1.2+dx*s+dy*c]})};
+const map=(pts,ox,oy,s)=>pts.map(([x,y])=>[ox+x*s,oy+y*s]);
+const skel=(pts,col,op=1,w=2.6)=>`<g style="opacity:${op}">`+BONES.map(([a,b])=>`<line x1="${pts[a][0].toFixed(1)}" y1="${pts[a][1].toFixed(1)}" x2="${pts[b][0].toFixed(1)}" y2="${pts[b][1].toFixed(1)}" style="stroke:${col};stroke-width:${w};stroke-linecap:round"/>`).join('')+pts.map(([x,y])=>`<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${w*.95}" style="fill:${col}"/>`).join('')+'</g>';
+const T=(x,y,t,cls='',anc='start',extra='')=>`<text x="${x}" y="${y}" class="${cls}" text-anchor="${anc}" ${extra}>${t}</text>`;
+const box=(x,y,w,h,fill,stroke,rx=4)=>`<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="${rx}" style="fill:${fill};stroke:${stroke};stroke-width:1.4"/>`;
+const ln=(x1,y1,x2,y2,col='var(--soft)',w=1.6,extra='')=>`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" style="stroke:${col};stroke-width:${w}" ${extra}/>`;
+const defs=`<defs><marker id="arR" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" style="fill:var(--red)"/></marker><marker id="arS" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" style="fill:var(--soft)"/></marker></defs>`;
+
+/* Hình chính */
+const heroBox=$('heroBox'),heroSvg=$('hero');
+const N=40,ENDS=[17,22,27,32,37],PV=[0.31,0.91,0.97,0.95,0.90],ST=['—','NGÃ','NGÃ','NGÃ','chặn'];
+const fstate=f=>f<14?0:f<=20?1:2;
+const drawHero=()=>{
+  const W=heroBox.clientWidth;if(!W)return;
+  const wide=W>=700,H=wide?400:620;heroBox.style.height=H+'px';
+  const S=wide?{x:0,y:0,w:W*.3,h:H}:{x:0,y:0,w:W,h:220};
+  const L=wide?{x:S.w+60,y:8,w:W-S.w-70,h:H-16}:{x:40,y:236,w:W-48,h:H-244};
+  let o=defs;
+  const s=Math.min((S.h-60)/3.05,S.w*.26),px=S.x+S.w*.18,py=S.y+S.h-34;
+  o+=ln(S.x,py+4,S.x+S.w,py+4,'var(--rule)',2);
+  [[0,.22,'var(--stand)'],[22,.3,'var(--stand)'],[45,.45,'var(--red)'],[68,.65,'var(--red)'],[88,1,'var(--red)']].forEach(([a,op,c])=>{o+=skel(map(pose(a),px,py-1.2*s,s),c,op,a==88?3.2:2.6)});
+  o+=T(S.x,S.y+18,'Khung 14 → 20: thân xoay gần 90°','b');
+  o+=T(S.x,S.y+38,'trong khoảng 0,6 giây','sm');
+  const cw=L.w/N,fx=f=>L.x+(f-.5)*cw;
+  o+=T(L.x-8,L.y+16,'khung','sm','end');
+  [1,10,20,30,40].forEach(f=>o+=T(fx(f),L.y+16,f,'sm','middle'));
+  for(let f=1;f<=N;f++){const st=fstate(f);o+=`<rect x="${(fx(f)-cw*.38).toFixed(1)}" y="${L.y+24}" width="${(cw*.76).toFixed(1)}" height="16" rx="1.5" style="fill:${['var(--stand)','var(--red)','var(--ink)'][st]};opacity:${st==2?.6:1}"/>`}
+  ENDS.forEach((e,k)=>{const y=L.y+54+k*24,x0=fx(e-16)-cw/2,x1=fx(e)+cw/2;o+=box(x0.toFixed(1),y,(x1-x0).toFixed(1),19,'var(--blueT)','var(--blue)',3)+T((x0+6).toFixed(1),y+14,`khung ${e-16}–${e}`,'',"start",'style="font-size:13px"')});
+  const c0=L.y+54+5*24+26,c1=L.y+L.h-34,py2=p=>c1-(c1-c0)*p;
+  [0,.5,1].forEach(p=>{o+=ln(L.x,py2(p),L.x+L.w,py2(p),'var(--rule)',1)+T(L.x-8,py2(p)+5,String(p).replace('.',','),'sm','end')});
+  o+=T(L.x-8,c0-10,'P(ngã)','sm','end');
+  o+=ln(L.x,py2(.83),L.x+L.w,py2(.83),'var(--red)',1.6,'stroke-dasharray="6 5"')+T(L.x+4,py2(.83)-7,'ngưỡng 0,83','',"start",'style="fill:var(--red);font-size:13px"');
+  o+=`<polyline points="${ENDS.map((e,k)=>fx(e).toFixed(1)+','+py2(PV[k]).toFixed(1)).join(' ')}" style="fill:none;stroke:var(--soft);stroke-width:1.6"/>`;
+  ENDS.forEach((e,k)=>{const x=fx(e),y=py2(PV[k]),st=ST[k];
+    const fill=st=='NGÃ'?'var(--red)':st=='chặn'?'var(--bg)':'var(--soft)',stroke=st=='chặn'?'var(--blue)':fill;
+    o+=`<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="6.5" style="fill:${fill};stroke:${stroke};stroke-width:2.5"/>`;
+    o+=T(x.toFixed(1),(y-13).toFixed(1),String(PV[k]).replace('.',','),'sm','middle');
+    o+=T(x.toFixed(1),c1+22,st,'b','middle',`style="fill:${st=='NGÃ'?'var(--red)':st=='chặn'?'var(--blue)':'var(--soft)'}"`);});
+  o+=T(L.x-8,c1+22,'kết quả','sm','end');
+  heroSvg.innerHTML=o;
+};
+const heroRO=new ResizeObserver(drawHero);heroRO.observe(heroBox);drawHero();
+
+/* Chuẩn hóa */
+{
+  let o=defs;
+  o+=T(10,24,'Trước: tọa độ ảnh (pixel)','b');
+  o+=box(10,36,330,262,'var(--tint)','var(--rule)');
+  const sp=map(pose(0),262,282-1.2*36,36);o+=skel(sp,'var(--blue)',1,2.4);
+  const hc=[(sp[11][0]+sp[12][0])/2,(sp[11][1]+sp[12][1])/2];
+  o+=`<circle cx="${hc[0]}" cy="${hc[1]}" r="5" style="fill:var(--red)"/>`;
+  o+=T(24,62,'người lệch về góc phải,','sm')+T(24,80,'to nhỏ tùy khoảng cách','sm');
+  o+=T(hc[0]-14,hc[1]+5,'tâm hông','sm','end');
+  o+=`<line x1="348" y1="168" x2="410" y2="168" style="stroke:var(--soft);stroke-width:2" marker-end="url(#arS)"/>`;
+  o+=T(379,154,'− tâm','sm','middle')+T(379,192,'÷ tỉ lệ','sm','middle');
+  const bl=BONES.map(([a,b])=>Math.hypot(P0[a][0]-P0[b][0],P0[a][1]-P0[b][1])).sort((a,b)=>a-b),med=bl[Math.floor(bl.length/2)];
+  const g=30,ox=588,oy=150;
+  o+=T(420,24,'Sau normalize_clip','b');
+  for(let i=-5;i<=5;i++)o+=ln(ox+i*g,40,ox+i*g,298,'var(--rule)',i?1:1.8);
+  for(let j=-3;j<=4;j++)o+=ln(ox-5*g,oy+j*g,ox+5*g,oy+j*g,'var(--rule)',j?1:1.8);
+  const s=g/med,hipY=-.45;o+=skel(map(pose(0),ox,oy-hipY*s,s),'var(--blue)',1,2.4);
+  o+=`<circle cx="${ox}" cy="${oy}" r="5" style="fill:var(--red)"/>`+T(ox+10,oy-8,'(0, 0)','sm');
+  o+=T(ox+5*g,312,'1 ô = 1 độ dài xương trung vị','sm','end');
+  $('normFig').innerHTML=o;
+}
+
+/* Vận tốc */
+{
+  let o=defs;const s=58,px=96,py=272,oy=py-1.2*s;
+  const a=map(pose(24),px,oy,s),b=map(pose(44),px,oy,s);
+  o+=ln(20,py+4,350,py+4,'var(--rule)',2);
+  o+=skel(a,'var(--stand)',1,2.4)+skel(b,'var(--blue)',1,2.6);
+  a.forEach((p,k)=>{const q=b[k];if(Math.hypot(q[0]-p[0],q[1]-p[1])>14&&k!=1&&k!=2&&k!=3&&k!=4)o+=`<line x1="${p[0].toFixed(1)}" y1="${p[1].toFixed(1)}" x2="${q[0].toFixed(1)}" y2="${q[1].toFixed(1)}" style="stroke:var(--red);stroke-width:1.8" marker-end="url(#arR)"/>`});
+  o+=T(20,24,'khung t−1','',"start",'style="fill:var(--soft)"')+T(110,24,'khung t','b',"start",'style="fill:var(--blue)"')+T(190,24,'dx, dy','b',"start",'style="fill:var(--red)"');
+  const x0=452,cw=17,ch=26,y0=70,rows=['x','y','mask','dx','dy'];
+  o+=T(x0,50,'khớp 0','sm')+T(x0+17*cw,50,'khớp 16','sm','end');
+  rows.forEach((r,i)=>{o+=T(x0-8,y0+i*ch+18,r,i>2?'b':'','end',i>2?'style="fill:var(--red)"':'');
+    for(let k=0;k<17;k++){const miss=(k==3)&&i!=2;const fill=i<2?'var(--blueT)':i==2?(k==3?'var(--bg)':'var(--blue)'):'var(--redT)';o+=`<rect x="${x0+k*cw}" y="${y0+i*ch}" width="${cw-2}" height="${ch-3}" style="fill:${miss?'var(--tint)':fill};stroke:var(--rule);stroke-width:1"/>`}});
+  o+=T(x0,y0+5*ch+24,'17 khớp × 5 kênh = 85 số cho mỗi khung','b');
+  o+=T(x0,y0+5*ch+46,'khớp 3 (tai trái) không thấy: mask 0,','sm')+T(x0,y0+5*ch+64,'x, y, dx, dy đều bằng 0','sm');
+  $('velFig').innerHTML=o;
+}
+
+/* Kiến trúc */
+{
+  const L=[['BatchNorm1d','[N,17,85]',170],['Linear 85→128','[N,17,128]',11008],['LSTM tầng 1','[N,17,128]',132096],['LSTM tầng 2','[N,17,128]',132096],['Linear 256→2','[N,2]',514]];
+  const mx=Math.max(...L.map(r=>r[2])),tot=L.reduce((a,r)=>a+r[2],0),f=n=>n.toLocaleString('vi-VN');
+  $('arch').innerHTML=`<div class="row head"><span>Lớp</span><span class="shape">Đầu ra</span><span class="barc">Tham số</span><span class="num">Số</span></div>`+L.map(r=>`<div class="row"><span>${r[0]}</span><span class="shape"><code>${r[1]}</code></span><span class="barc"><div class="bar" style="width:${Math.max(1,r[2]/mx*100)}%"></div></span><span class="num">${f(r[2])}</span></div>`).join('')+`<div class="row tot"><span>Tổng</span><span class="shape"></span><span class="barc"></span><span class="num">${f(tot)}</span></div>`;
+}
+
+/* Ô LSTM */
+{
+  let o=defs;const cy=95,by=245;
+  o+=box(140,52,520,222,'var(--tint)','var(--rule)',10);
+  o+=`<line x1="40" y1="${cy}" x2="722" y2="${cy}" style="stroke:var(--blue);stroke-width:3"/>`;
+  o+=T(40,cy-12,'c(t−1)','b',"start",'style="fill:var(--blue)"')+T(722,cy-12,'c(t)','b','end','style="fill:var(--blue)"');
+  o+=`<path d="M40 ${by} H560" style="fill:none;stroke:var(--soft);stroke-width:2"/>`+T(40,by-10,'h(t−1)','b');
+  o+=`<line x1="200" y1="318" x2="200" y2="${by}" style="stroke:var(--soft);stroke-width:2"/>`+T(212,318,'x(t): vector khung 128','b');
+  const gate=(x,lab,col)=>ln(x,by,x,192,'var(--soft)',2)+box(x-30,156,60,36,'var(--bg)',col,5)+T(x,179,lab,'b','middle',`style="fill:${col}"`);
+  const op=(x,y,t)=>`<circle cx="${x}" cy="${y}" r="12" style="fill:var(--bg);stroke:var(--ink);stroke-width:1.8"/>`+T(x,y+5,t,'b','middle');
+  o+=gate(260,'σ f','var(--red)')+gate(340,'σ i','var(--blue)')+gate(430,'tanh g','var(--blue)')+gate(530,'σ o','var(--blue)');
+  o+=ln(260,156,260,cy+12,'var(--soft)',2)+op(260,cy,'×');
+  o+=`<path d="M340 156 V130 H372 M430 156 V130 H408" style="fill:none;stroke:var(--soft);stroke-width:2"/>`+op(390,130,'×')+ln(390,118,390,cy+12,'var(--soft)',2)+op(390,cy,'+');
+  o+=ln(620,cy,620,114,'var(--blue)',2)+`<ellipse cx="620" cy="128" rx="26" ry="14" style="fill:var(--bg);stroke:var(--ink);stroke-width:1.6"/>`+T(620,133,'tanh','sm','middle');
+  o+=ln(620,142,620,162,'var(--soft)',2)+op(620,174,'×')+`<path d="M560 174 H608" style="fill:none;stroke:var(--soft);stroke-width:2"/>`;
+  o+=`<path d="M620 186 V${by} H722" style="fill:none;stroke:var(--ink);stroke-width:2.4" marker-end="url(#arS)"/>`+T(722,by-10,'h(t)','b','end');
+  o+=T(260,140,'quên','sm','end')+T(300,118,'ghi thêm','sm','end');
+  $('cellFig').innerHTML=o;
+}
+
+/* Trải theo thời gian */
+{
+  let o=defs;const X=[60,145,230,315,400],lab=['1','2','3','…','17'],R=[[292,'khung','var(--tint)','var(--rule)'],[236,'128','var(--bg)','var(--rule)'],[176,'LSTM 1','var(--blueT)','var(--blue)'],[116,'LSTM 2','var(--blueT)','var(--blue)'],[56,'h','var(--bg)','var(--ink)']];
+  X.forEach((x,c)=>{if(lab[c]=='…'){o+=T(x,180,'…','b','middle');return}
+    R.forEach(([y,t,f,s],r)=>{o+=box(x-32,y-16,64,32,f,s,4)+T(x,y+5,r==0?'khung '+lab[c]:r==4?'h'+lab[c]:t,r==2||r==3?'b':'','middle',r==0||r==1?'style="font-size:13px"':'');if(r<4)o+=`<line x1="${x}" y1="${y-16}" x2="${x}" y2="${R[r+1][0]+18}" style="stroke:var(--soft);stroke-width:1.5" marker-end="url(#arS)"/>`});
+    if(c<4){[176,116].forEach(y=>o+=`<line x1="${x+32}" y1="${y}" x2="${X[c+1]-(lab[c+1]=='…'?14:34)}" y2="${y}" style="stroke:var(--blue);stroke-width:2" marker-end="url(#arS)"/>`)}
+    if(lab[c-1]=='…')[176,116].forEach(y=>o+=`<line x1="${X[c-1]+14}" y1="${y}" x2="${x-34}" y2="${y}" style="stroke:var(--blue);stroke-width:2" marker-end="url(#arS)"/>`);});
+  o+=T(10,240,'nén','sm')+T(10,24,'Đầu ra tầng 2 ở mỗi khung','sm');
+  o+=box(480,20,150,40,'var(--bg)','var(--ink)')+T(555,45,'trung bình 17 h','',"middle");
+  o+=box(480,96,150,40,'var(--bg)','var(--ink)')+T(555,121,'h17 (khung cuối)','',"middle");
+  X.forEach((x,c)=>{if(lab[c]!='…')o+=`<path d="M${x} 40 Q${x} 30 ${Math.min(x+60,470)} 36 L478 40" style="fill:none;stroke:var(--soft);stroke-width:1.2;stroke-dasharray:3 3"/>`});
+  o+=`<line x1="432" y1="70" x2="478" y2="112" style="stroke:var(--ink);stroke-width:1.6" marker-end="url(#arS)"/>`;
+  o+=box(656,34,94,88,'var(--blueT)','var(--blue)')+T(703,62,'ghép','b','middle')+T(703,82,'256','','middle')+T(703,102,'Linear','sm','middle');
+  o+=ln(630,40,656,64,'var(--ink)',1.6)+ln(630,116,656,96,'var(--ink)',1.6);
+  o+=`<line x1="703" y1="122" x2="703" y2="186" style="stroke:var(--ink);stroke-width:1.6" marker-end="url(#arS)"/>`;
+  o+=box(640,190,120,72,'var(--redT)','var(--red)')+T(700,216,'softmax','sm','middle')+T(700,244,'P(ngã)','b','middle','style="fill:var(--red)"');
+  $('unrollFig').innerHTML=o;
+}
+
+/* Ma trận nhầm lẫn */
+{
+  const M=[['Val, ngưỡng 0,5',209,11,4,612],['Val, ngưỡng 0,83',207,6,6,617],['Test, ngưỡng 0,83',242,3,4,270]];
+  $('cms').innerHTML=M.map(([t,tp,fp,fn,tn])=>`<div class="cm"><h4>${t}</h4><div class="g"><div></div><div class="lab">báo NGÃ</div><div class="lab">báo không</div><div class="lab">thật NGÃ</div><div class="ok">${tp}</div><div class="bad">${fn} sót</div><div class="lab">thật không</div><div class="bad">${fp} nhầm</div><div class="ok">${tn}</div></div></div>`).join('')+`<p class="note" style="grid-column:1/-1;margin:0">Đơn vị: cửa sổ 17 khung. Số liệu từ <code>val_05</code>, <code>val_thr</code>, <code>test_thr</code> trong report.</p>`;
+}
+
+/* Cổng tốc độ */
+{
+  let o=defs;const l=70,r=740,t=20,b=330,xm=4,ym=250,X=v=>l+(r-l)*v/xm,Y=v=>b-(b-t)*v/ym;
+  o+=`<rect x="${l}" y="${t}" width="${r-l}" height="${b-t}" style="fill:var(--blueT)"/>`;
+  o+=`<rect x="${l}" y="${Y(70)}" width="${X(1.6)-l}" height="${b-Y(70)}" style="fill:var(--redT)"/>`;
+  for(let v=0;v<=4;v++)o+=ln(X(v),b,X(v),b+5,'var(--soft)',1)+T(X(v),b+22,v,'sm','middle');
+  [0,70,150,250].forEach(v=>o+=ln(l-5,Y(v),l,Y(v),'var(--soft)',1)+T(l-9,Y(v)+5,v,'sm','end'));
+  o+=ln(X(1.6),t,X(1.6),b,'var(--red)',1.8,'stroke-dasharray="6 5"')+ln(l,Y(70),r,Y(70),'var(--red)',1.8,'stroke-dasharray="6 5"');
+  o+=T(X(1.6)+6,t+18,'vai 1,6 thân/s','b',"start",'style="fill:var(--red)"')+T(r-6,Y(70)-8,'xoay 70°/s','b','end','style="fill:var(--red)"');
+  o+=T(l+12,Y(70)+30,'Bị chặn:','b')+T(l+12,Y(70)+50,'KHÔNG NGÃ','b')+T(l+12,Y(70)+70,'dù P cao','sm');
+  o+=T(X(2.6),Y(170),'Qua cổng: xác nhận NGÃ','b','middle','style="fill:var(--blue)"')+T(X(2.6),Y(170)+20,'nếu P(ngã) ≥ 0,83','sm','middle');
+  o+=`<rect x="${X(0)}" y="${b-10}" width="${X(1.42)-X(0)}" height="10" style="fill:var(--ink);opacity:.55"/>`;
+  o+=`<rect x="${X(2.93)}" y="${b-10}" width="${X(4)-X(2.93)}" height="10" style="fill:var(--red)"/>`;
+  o+=T(X(2.93),b-18,'ngã thật ≥ 2,93','sm')+T(X(.05),b-18,'nằm chậm ≤ 1,42','sm');
+  o+=T((l+r)/2,b+46,'vai tụt nhanh nhất trong cửa sổ (thân/giây)','sm','middle');
+  o+=T(l-4,t-4,'xoay (°/s)','sm','start');
+  $('gateFig').innerHTML=o+'';
+  $('gateFig').insertAdjacentHTML('afterend','<p class="note" style="margin-top:6px">Hai dải dưới trục: khoảng tốc độ vai đo trên video của bộ <code>v1_lying</code> (ghi chú trong <code>configs/web.yaml</code>). Cổng của B1 đặt ở 1,6, nằm giữa hai dải.</p>');
+}
+
+/* Mẫu nằm tạo thêm */
+{
+  let o=defs;const l=60,r=600,t=26,b=250,X=f=>l+(r-l)*(f-1)/16,Y=v=>b-(b-t)*v;
+  const sm=(a,b2,f)=>{const u=Math.min(1,Math.max(0,(f-a)/(b2-a)));return u*u*(3-2*u)};
+  const fall=f=>.92-.8*sm(6,10,f),slow=f=>.92-.8*sm(1,17,f)*.98,still=f=>.12+.025*Math.sin(f*2.1);
+  for(let v=0;v<=1;v+=.5)o+=ln(l,Y(v),r,Y(v),'var(--rule)',1);
+  [1,5,9,13,17].forEach(f=>o+=T(X(f),b+22,f,'sm','middle'));
+  o+=T((l+r)/2,b+44,'khung trong cửa sổ','sm','middle');
+  o+=T(l-8,Y(1)+5,'cao','sm','end')+T(l-8,Y(0)+5,'thấp','sm','end')+T(l,t-10,'độ cao của vai','sm');
+  const path=(fn,col,w)=>`<polyline points="${Array.from({length:33},(_,i)=>{const f=1+i/2;return X(f).toFixed(1)+','+Y(fn(f)).toFixed(1)}).join(' ')}" style="fill:none;stroke:${col};stroke-width:${w};stroke-linejoin:round"/>`;
+  o+=path(still,'var(--soft)',2.6)+path(slow,'var(--blue)',3)+path(fall,'var(--red)',3.4);
+  o+=T(r+10,Y(fall(17))-14,'ngã gốc','b',"start",'style="fill:var(--red)"')+T(r+10,Y(fall(17))+4,'nhãn 1','sm');
+  o+=T(X(9)+8,Y(slow(9))-12,'nằm xuống chậm · nhãn 0','b',"start",'style="fill:var(--blue)"');
+  o+=T(r+10,Y(still(17))+26,'nằm yên','b',"start",'style="fill:var(--soft)"')+T(r+10,Y(still(17))+44,'nhãn 0','sm');
+  o+=`<line x1="${X(7)}" y1="${Y(.6)}" x2="${X(9.4)}" y2="${Y(.6)}" style="stroke:var(--red);stroke-width:1.4" marker-end="url(#arR)" marker-start="url(#arR)"/>`;
+  o+=T(X(6.6),Y(.6)+5,'dốc: nhanh','sm','end');
+  $('lyFig').innerHTML=o;
+}
+}
+</script>

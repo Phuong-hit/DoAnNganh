@@ -1,6 +1,7 @@
 # maixcam_app — chạy trên MaixCAM / MaixCAM Lite
 
-MaixCAM **chỉ làm luồng trực tiếp**: camera → YOLO11-pose trên NPU → phát ảnh + keypoint qua HTTP.
+MaixCAM chạy **cả pipeline**: camera → YOLO11-pose (NPU) → SkeletonFilter → Shift-GCN (numpy, CPU) → hậu xử lý nhánh final → cảnh báo NGÃ,
+đồng thời phát ảnh + keypoint + kết quả ngã qua HTTP cho web trên PC (xem lại, lưu clip).
 Phát hiện ngã (LSTM / Shift-GCN), lưu 5 cảnh báo gần nhất và giao diện xem lại đều chạy trên PC (`run_web.py`).
 
 ```
@@ -10,7 +11,9 @@ MaixCAM (main.py, cổng 8000) ──Wi-Fi──► PC: python run_web.py --host
 
 | File | Vai trò |
 |---|---|
-| `main.py` | **Chạy file này.** Pose trên NPU + HTTP stream (`/`, `/stream`, `/info`) |
+| `main.py` | **Chạy file này.** Pose (NPU) + phát hiện ngã + HTTP (`/`, `/stream`, `/info`, `/bench`) |
+| `src/fall_detect.py`, `src/shiftgcn_np.py` | Phát hiện ngã trên board (numpy), giống hệt web — kiểm tra: `python tests/test_maixcam_fall.py` |
+| `model_classify/*.npz` | Trọng số Shift-GCN cho board. Tạo/cập nhật trên PC: `python export_maixcam_model.py` |
 | `pose_preview.py` | Bản gốc của nhánh `maixcam`: chỉ vẽ khung xương lên màn hình, không phát mạng |
 | `rtsp_stream.py` | Dự phòng: chỉ phát RTSP, PC tự chạy YOLO (`rtsp://<IP>:8554/live`) |
 | `src/` | Code pose cho MaixPy (từ nhánh `maixcam`) |
@@ -39,6 +42,13 @@ Mở `http://127.0.0.1:5000/monitor` (hoặc `http://<IP PC>:5000/monitor` trên
 Không dùng `--monitor` thì nhập `maix://192.168.x.y` vào ô nguồn trên trang và bấm “Bắt đầu giám sát”.
 Ô nguồn ở trang chính (`/`) cũng nhận `maix://...` như nhập `0` cho webcam.
 
+## Đo hiệu năng trên board
+
+1. Run Project như trên, **tắt web / trình duyệt** đang xem luồng (có người xem thì board phải nén JPEG).
+2. Trên PC: `python bench_maix.py --ip <IP MaixCAM>` (đo 120 s, đứng / đi lại trước camera).
+   Thêm cột PC: `python bench_report.py --cpu --label cpu_shiftgcn` rồi `--compare "output/bench/report_cpu_shiftgcn_*.json"`.
+3. Xem nhanh: `http://<IP>:8000/bench` (đo lại từ đầu: `/bench/reset`); log MaixVision in dòng `[bench]` mỗi 10 s.
+
 ## Tự chạy khi cắm điện
 
 MaixVision → **Install App** (dùng `app.yaml`) → trên máy chọn app *Fall Monitor* làm app khởi động
@@ -49,6 +59,14 @@ MaixVision → **Install App** (dùng `app.yaml`) → trên máy chọn app *Fal
 Đầu `main.py`: `PORT`, `JPEG_QUALITY` (giảm nếu Wi-Fi yếu / luồng giật), `CONF_TH`, `KP_CONF_TH`, `SHOW_ON_SCREEN`.
 
 ## Chuyển lại model pose của nhóm sang .cvimodel
+
+**Cách nhanh (đã chuẩn bị sẵn):** trong WSL Ubuntu chạy
+`bash /mnt/d/documentss/DoAnNganh/FallApp/fall_web/maixcam_app/convert_pose.sh`
+(tự cài uv + Python 3.10 + tpu_mlir, chuyển ONNX 320×224 đã chuẩn bị ở `output/maix_convert/`, chép `.cvimodel` mới vào `model_classify/`).
+
+Lưu ý tên output với ultralytics hiện tại: tensor keypoint (1×51×N) là `/model.23/Concat_2_output_0`,
+còn `/model.23/Concat_output_0` là tensor box 64 kênh. ONNX trong `output/maix_convert/*_maix.onnx` đã được
+đổi tên để keypoint mang tên `/model.23/Concat_output_0` như MaixPy cần. Các bước thủ công bên dưới để tham khảo.
 
 `yolo11n_pose_f11_best_v5.cvimodel` hiện được chuyển **nguyên đồ thị** (một output `output0`) nên `nn.YOLO11`
 báo `get tensor idx error`. MaixPy cần model **cắt ở 3 output của head** để nó tự giải mã.

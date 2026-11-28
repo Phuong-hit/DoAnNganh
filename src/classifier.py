@@ -171,10 +171,18 @@ class FallClassifier:
             self.post_cfg = dict(consec_frames=int(pp.get("consec_frames", 1)),
                                  hold_frames=int(pp.get("hold_frames", 10)),
                                  min_valid_ratio=float(pp.get("min_valid_ratio", 0.5)),
-                                 reset_empty_frames=int(pp.get("reset_empty_frames", 5)))
+                                 reset_empty_frames=int(pp.get("reset_empty_frames", 5)),
+                                 max_hold_frames=int(pp["max_hold_frames"]) if pp.get("max_hold_frames") else None)
+            # Cổng tốc độ cho hậu xử lý (thêm so với final): chỉ KÍCH HOẠT khi cửa sổ có vai hạ / thân xoay
+            # đủ nhanh -> nằm xuống chậm không bị báo ngã. Không có ngoại lệ "P rất cao" (nằm chậm vẫn P ~ 0.99).
+            sg = pp.get("speed_gate")
+            self.post_gate = (SpeedGate(True, float(sg.get("shoulder_drop", 2.0)),
+                                        float(sg.get("rotation") or 1e9), None) if sg else None)
+            self.post_cfg["speed_gate"] = self.post_gate.to_dict() if self.post_gate else None
             self.post = FallPostProcessor(self.fall_threshold, self.post_cfg["consec_frames"],
-                                          self.post_cfg["hold_frames"])
+                                          self.post_cfg["hold_frames"], self.post_cfg["max_hold_frames"])
         self._raw = 0.0           # P(ngã) gần nhất của model (giữ khi cửa sổ thiếu người, như final)
+        self._fast = True         # cửa sổ gần nhất qua cổng tốc độ (giữ cùng _raw)
         self._empty = 0           # số khung không thấy người liên tiếp
         self._full_count = 0      # số khung kể từ khi cửa sổ đầy (dự đoán khi chia hết cho stride)
         self._aspect = 1.0
@@ -196,6 +204,7 @@ class FallClassifier:
         self.frames_since_prediction = 0
         self.last = None
         self._raw, self._empty, self._full_count, self._aspect = 0.0, 0, 0, 1.0
+        self._fast = True
         if self.post is not None:
             self.post.reset()
 
@@ -203,8 +212,11 @@ class FallClassifier:
         if self.post is None:
             return ""
         c = self.post_cfg
-        return (f"hậu xử lý final: ngưỡng {self.fall_threshold:.2f}, {c['consec_frames']} khung liên tiếp, "
-                f"giữ {c['hold_frames']} khung tới khi đứng thẳng")
+        s = (f"hậu xử lý final: ngưỡng {self.fall_threshold:.2f}, {c['consec_frames']} khung liên tiếp, "
+             f"giữ {c['hold_frames']} khung tới khi đứng thẳng")
+        if self.post_gate is not None:
+            s += f", cổng tốc độ: {self.post_gate.describe()}"
+        return s
 
     def _post_result(self, p_fall: float, label: bool) -> dict:
         model_label = int(p_fall >= self.fall_threshold)
@@ -236,9 +248,17 @@ class FallClassifier:
             if float(np.mean(item["valid"])) >= c["min_valid_ratio"]:
                 clip = normalize_clip(item["seq"], item["mask"], aspect=self._aspect)
                 self._raw = float(self.predict_batch(clip[np.newaxis])[0])
+                self._fast = self._post_fast(clip)
         self._full_count += 1
-        self.last = self._post_result(self._raw, self.post.update(self._raw, pose, self._aspect))
+        self.last = self._post_result(self._raw, self.post.update(self._raw, pose, self._aspect, self._fast))
+        self.last["gated"] = bool(self.last["model_label"] and not self._fast and not self.last["label"])
         return self.last
+
+    def _post_fast(self, clip) -> bool:
+        """Cửa sổ (đã chuẩn hóa) có chuyển động đủ nhanh theo cổng tốc độ của hậu xử lý? Cổng tắt -> True."""
+        if self.post_gate is None:
+            return True
+        return bool(self.post_gate.passes(motion_features(clip, self.train_fps or 10.0), 0.0))
 
     def postprocess_sequence(self, seq, mask, valid=None, aspect=1.0, batch=256):
         """Offline (NPZ cả video), mô phỏng đúng _update_post() từng khung.
@@ -269,15 +289,16 @@ class FallClassifier:
         probs = (np.concatenate([self.predict_batch(np.stack(clips[k:k + batch]))
                                  for k in range(0, len(clips), batch)]) if clips else np.zeros(0))
         # Lượt 2: hậu xử lý tuần tự.
-        post = FallPostProcessor(self.fall_threshold, c["consec_frames"], c["hold_frames"])
-        raw, idx, ps, labels = 0.0, [], [], []
+        post = FallPostProcessor(self.fall_threshold, c["consec_frames"], c["hold_frames"], c["max_hold_frames"])
+        raw, fast, idx, ps, labels = 0.0, True, [], [], []
         for i, k in steps:
             if k == "reset":
                 post.reset()
                 continue
             if k is not None:
                 raw = float(probs[k])
-            lab = post.update_arrays(raw, seq[i] if valid[i] else None, mask[i] if valid[i] else None, aspect)
+                fast = self._post_fast(clips[k])
+            lab = post.update_arrays(raw, seq[i] if valid[i] else None, mask[i] if valid[i] else None, aspect, fast)
             idx.append(i)
             ps.append(raw)
             labels.append(int(lab))

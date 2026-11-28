@@ -15,6 +15,7 @@ Trên web PC nhập nguồn:  maix://<IP>     (cổng khác: maix://<IP>:8001)
      "bbox": [x1, y1, x2, y2] chuẩn hóa | null, "score": conf người | null, "pose_ms": thời gian pose}
 """
 import json
+from collections import deque
 import os
 import socket
 import sys
@@ -51,6 +52,8 @@ if PROJECT_DIR not in sys.path:
 
 from src.constants import SKELETON_EDGES  # noqa: E402
 from src.pose_estimate import PoseEstimate  # noqa: E402
+from src.skeleton_filter import SkeletonFilter  # noqa: E402
+from src.fall_detect import FallDetector  # noqa: E402
 
 # Thử lần lượt: model của nhóm -> model YOLO11-pose có sẵn trong image MaixCAM (dự phòng).
 # Model đầu tiên detect được một khung thật sẽ được dùng.
@@ -64,9 +67,144 @@ if not MODEL_CANDIDATES:
 
 PORT = 8000
 JPEG_QUALITY = 80        # 70-85 là vừa cho Wi-Fi; giảm nếu luồng bị giật
-CONF_TH = 0.40
-KP_CONF_TH = 0.35
-SHOW_ON_SCREEN = True    # vẽ khung xương lên preview của MaixVision / màn hình (không ảnh hưởng ảnh gửi đi)
+CONF_TH = 0.25           # giống web / nhánh final (trước: 0.40)
+KP_CONF_TH = 0.25        # giống web / nhánh final (trước: 0.35)
+ENABLE_FALL = True       # chạy phát hiện ngã NGAY TRÊN MaixCAM (Shift-GCN numpy, model_classify/*.npz)
+CPU_BENCH_ON_START = True  # đo tốc độ CPU cho Shift-GCN 1 lần lúc khởi động (~5-15 s), kết quả ở log + /bench
+FALL_USE_NPU = True      # có shiftgcn_npu.mud/.cvimodel thì chạy Shift-GCN trên NPU (lỗi -> tự về numpy CPU)
+FALL_SAMPLE_FPS = 10.0  # lấy mẫu 10 khung/s cho bộ phân loại (cửa sổ 17 khung = 1.7 s, như lúc train)
+FILTER_MIN_CONF = 0.25   # SkeletonFilter(min_conf) như nhánh final
+SHOW_ON_SCREEN = True    # hiện ảnh camera + "NGA! / KHONG NGA  P=..." lên màn hình / preview MaixVision
+SHOW_SKELETON = False    # True: vẽ thêm khung xương, FPS, IP lên màn hình (không ảnh hưởng ảnh gửi lên web)
+
+
+# ---------------------------------------------------------------- đo hiệu năng (đề cương 3.3): thời gian + RAM
+def _proc_status_kb(key):
+    """VmHWM = peak RSS của tiến trình, VmRSS = RSS hiện tại (KB)."""
+    try:
+        with open("/proc/self/status") as f:
+            for line in f:
+                if line.startswith(key + ":"):
+                    return int(line.split()[1])
+    except Exception:
+        pass
+    return None
+
+
+def _meminfo_kb():
+    m = {}
+    try:
+        with open("/proc/meminfo") as f:
+            for line in f:
+                k, v = line.split(":", 1)
+                m[k] = int(v.split()[0])
+    except Exception:
+        pass
+    return m
+
+
+def mem_used_mb():
+    """RAM cả hệ thống đang dùng = MemTotal - MemAvailable (gồm cả bộ nhớ ngoài tiến trình Python)."""
+    m = _meminfo_kb()
+    if "MemTotal" in m and "MemAvailable" in m:
+        return (m["MemTotal"] - m["MemAvailable"]) / 1024.0
+    return None
+
+
+def _pct(xs, q):
+    if not xs:
+        return None
+    s = sorted(xs)
+    return s[min(len(s) - 1, int(round(q / 100.0 * (len(s) - 1))))]
+
+
+class Bench:
+    """Thời gian từng bước mỗi khung (ms) + RAM. Giữ BENCH_KEEP khung gần nhất. GET /bench để lấy, /bench/reset để đo lại."""
+    # fall_ms = lọc + cửa sổ + model + hậu xử lý; model_ms = riêng Shift-GCN; e2e_ms = đọc camera -> quyết định.
+    # 3 bước này chỉ có ở khung được lấy mẫu cho bộ phân loại (10 khung/s).
+    # fall_ms = filter_ms (SkeletonFilter) + prep_ms (cửa sổ + chuẩn hóa) + model_ms + post_ms (hậu xử lý)
+    STEPS = ("read_ms", "pose_ms", "fall_ms", "filter_ms", "prep_ms", "model_ms", "post_ms", "e2e_ms",
+             "encode_ms", "display_ms", "loop_ms")
+
+    def __init__(self, keep=3000):
+        self.keep = keep
+        self.lock = threading.Lock()
+        self.mem_before_model = mem_used_mb()     # gọi TRƯỚC khi nạp model
+        self.mem_total = (_meminfo_kb().get("MemTotal") or 0) / 1024.0
+        self.reset()
+
+    def reset(self):
+        with self.lock:
+            self.data = {k: [] for k in self.STEPS}
+            self.frames = 0
+            self.samples = 0
+            self.sample_times = deque(maxlen=400)   # thời điểm lấy mẫu gần đây (tính tần số 10 s gần nhất)
+            self.alerts = 0
+            self.persons = 0
+            self.t0 = time.time()
+            self.mem_peak = mem_used_mb() or 0.0
+
+    def add_fall(self, **ms):
+        """Thời gian bước phát hiện ngã (chỉ khung được lấy mẫu). Giá trị None thì bỏ qua."""
+        with self.lock:
+            for k, v in ms.items():
+                if v is None:
+                    continue
+                lst = self.data[k]
+                lst.append(v)
+                if len(lst) > self.keep:
+                    del lst[0]
+            self.samples += 1
+            self.sample_times.append(time.time())
+
+    def add(self, valid, **ms):
+        with self.lock:
+            for k, v in ms.items():
+                lst = self.data[k]
+                lst.append(v)
+                if len(lst) > self.keep:
+                    del lst[0]
+            self.frames += 1
+            self.persons += int(bool(valid))
+            if self.frames % 10 == 0:              # đọc /proc 1 lần / 10 khung cho nhẹ
+                used = mem_used_mb()
+                if used is not None and used > self.mem_peak:
+                    self.mem_peak = used
+
+    def summary(self):
+        with self.lock:
+            out = {"frames": self.frames, "samples": self.samples, "alerts": self.alerts,
+                   "since_s": round(time.time() - self.t0, 1),
+                   "person_ratio": round(self.persons / self.frames, 3) if self.frames else None}
+            for k, xs in self.data.items():
+                if xs:
+                    out[k + "_mean"] = round(sum(xs) / len(xs), 2)
+                    out[k + "_p50"] = round(_pct(xs, 50), 2)
+                    out[k + "_p95"] = round(_pct(xs, 95), 2)
+                    out[k + "_max"] = round(max(xs), 2)
+            loop = out.get("loop_ms_mean")
+            out["fps"] = round(1000.0 / loop, 2) if loop else None
+            # Tần số đưa khung vào bộ phân loại (model train ở 10/s). Thấp hơn -> cửa sổ 17 khung dài hơn 1.7 s,
+            # chuyển động chậm trông nhanh hơn -> dễ báo nhầm (vd. nằm xuống chậm).
+            el = time.time() - self.t0
+            out["sample_hz_total"] = round(self.samples / el, 2) if el > 0 and self.samples else None
+            now = time.time()
+            recent = [x for x in self.sample_times if now - x <= 10.0]
+            span = min(10.0, now - self.t0)
+            out["sample_hz"] = round(len(recent) / span, 2) if span > 1.0 and recent else None   # 10 s gần nhất
+            hwm, rss = _proc_status_kb("VmHWM"), _proc_status_kb("VmRSS")
+            out["vm_hwm_mb"] = round(hwm / 1024.0, 1) if hwm else None       # peak RAM tiến trình
+            out["vm_rss_mb"] = round(rss / 1024.0, 1) if rss else None
+            out["mem_total_mb"] = round(self.mem_total, 1)
+            out["mem_used_before_mb"] = None if self.mem_before_model is None else round(self.mem_before_model, 1)
+            out["mem_used_now_mb"] = None if mem_used_mb() is None else round(mem_used_mb(), 1)
+            out["mem_used_peak_mb"] = round(self.mem_peak, 1)                 # peak RAM cả hệ thống khi chạy
+            if self.mem_before_model is not None:
+                out["mem_pipeline_mb"] = round(self.mem_peak - self.mem_before_model, 1)
+            return out
+
+
+BENCH = None   # tạo trong main(), trước khi nạp model
 
 
 # ---------------------------------------------------------------- khung mới nhất, dùng chung cho mọi client
@@ -97,7 +235,7 @@ class Latest:
 LATEST = Latest()
 
 
-def pose_to_json(pose, idx, t, w, h, pose_ms):
+def pose_to_json(pose, idx, t, w, h, pose_ms, fall=None):
     joints = None
     bbox = None
     valid = bool(pose is not None and pose.valid)
@@ -114,6 +252,9 @@ def pose_to_json(pose, idx, t, w, h, pose_ms):
     d = {"i": idx, "t": round(t, 3), "w": w, "h": h, "valid": valid, "joints": joints, "bbox": bbox,
          "score": None if pose is None or pose.score is None else round(float(pose.score), 3),
          "pose_ms": round(pose_ms, 1)}
+    if fall is not None:                            # kết quả phát hiện ngã của chính MaixCAM
+        d["fall"] = {"p": round(float(fall["prob"]), 4), "label": int(fall["label"]), "held": bool(fall["held"]),
+                     "gated": bool(fall.get("gated"))}
     return json.dumps(d, separators=(",", ":")).encode()
 
 
@@ -155,6 +296,19 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/info":
             body = json.dumps({"fps": round(LATEST.fps, 1), "pose_ms": round(LATEST.pose_ms, 1),
                                "clients": LATEST.clients, "frames": LATEST.seq}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        elif path in ("/bench", "/bench/reset"):
+            if path == "/bench/reset" and BENCH is not None:
+                BENCH.reset()
+            data = BENCH.summary() if BENCH is not None else {}
+            data["model"] = os.path.basename(CURRENT_MODEL[0] or "")
+            data.update(MODEL_INFO)
+            data["clients"] = LATEST.clients
+            body = json.dumps(data).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
@@ -272,8 +426,99 @@ def open_model():
     sys.exit(1)
 
 
+CURRENT_MODEL = [None]
+MODEL_INFO = {}
+
+
+def model_info(mud_path, estimator):
+    """Kích thước đầu vào + dung lượng file .cvimodel (file .mud chỉ trỏ tới nó)."""
+    info = {}
+    try:
+        m = estimator.backend.model
+        info["input"] = [m.input_width(), m.input_height()]
+    except Exception:
+        pass
+    try:
+        cvi = None
+        with open(mud_path) as f:
+            for line in f:
+                if line.strip().startswith("model") and "=" in line and line.split("=")[0].strip() == "model":
+                    cvi = os.path.join(os.path.dirname(mud_path), line.split("=", 1)[1].strip())
+        if cvi and os.path.isfile(cvi):
+            info["model_file"] = os.path.basename(cvi)
+            info["model_file_mb"] = round(os.path.getsize(cvi) / 2.0 ** 20, 2)
+    except Exception:
+        pass
+    return info
+
+
+def open_fall_detector():
+    """Shift-GCN (numpy) + SkeletonFilter cho phát hiện ngã trên board. Lỗi -> (None, None, {}): vẫn phát luồng pose."""
+    if not ENABLE_FALL:
+        return None, None, {}
+    d = os.path.join(PROJECT_DIR, "model_classify")
+    files = sorted(f for f in os.listdir(d) if f.endswith(".npz") and not f.endswith("_check.npz")) \
+        if os.path.isdir(d) else []
+    if not files:
+        print("\n[CẢNH BÁO] Không thấy model phát hiện ngã (.npz) trong %s -> chỉ chạy pose.\n"
+              "  Trên PC: python export_maixcam_model.py rồi Run Project lại." % d)
+        return None, None, {}
+    path = os.path.join(d, files[0])
+    mud = os.path.join(d, "shiftgcn_npu.mud")
+    check = os.path.join(d, "shiftgcn_npu_check.npz")
+    use_npu = FALL_USE_NPU and os.path.isfile(mud) and os.path.isfile(os.path.join(d, "shiftgcn_npu.cvimodel"))
+    try:
+        det = FallDetector.load(path, npu_mud=mud if use_npu else None,
+                                check_npz=check if os.path.isfile(check) else None)
+        flt = SkeletonFilter(min_conf=FILTER_MIN_CONF)
+    except Exception as e:
+        print("\n[CẢNH BÁO] Không nạp được %s: %s -> chỉ chạy pose." % (files[0], e))
+        return None, None, {}
+    li = getattr(det, "load_info", {})
+    backend = li.get("fall_backend", "numpy")
+    model_file = "shiftgcn_npu.cvimodel" if backend == "npu" else files[0]
+    info = {"fall_model": model_file,
+            "fall_model_kb": round(os.path.getsize(os.path.join(d, model_file)) / 1024.0, 1),
+            "fall_params": det.net.num_params, "fall_threshold": det.threshold,
+            "fall_window": det.window_size, "fall_sample_fps": FALL_SAMPLE_FPS}
+    info.update(li)
+    if use_npu and backend != "npu":
+        print("\n[CẢNH BÁO] Shift-GCN trên NPU không dùng được (%s) -> chạy numpy trên CPU (chậm)."
+              % li.get("fall_npu_error"))
+    elif backend == "npu":
+        print("Shift-GCN trên NPU: tự kiểm tra lệch %s, đổi nhãn %s (so với PyTorch trên 8 clip thật)"
+              % (li.get("fall_npu_check_err"), li.get("fall_npu_check_flips")))
+    print("Phát hiện ngã trên MaixCAM: %s [%s] (%d tham số, ngưỡng %.2f, cửa sổ %d khung @ %g FPS)"
+          % (model_file, backend.upper(), info["fall_params"], det.threshold, det.window_size, FALL_SAMPLE_FPS))
+    return det, flt, info
+
+
 def main():
+    global BENCH
+    BENCH = Bench()                                 # ghi RAM hệ thống TRƯỚC khi nạp model
     estimator, cam, model_path = open_model()
+    CURRENT_MODEL[0] = model_path
+    MODEL_INFO.update(model_info(model_path, estimator))
+    det, flt, fall_info = open_fall_detector()
+    MODEL_INFO.update(fall_info)
+    if CPU_BENCH_ON_START and det is not None:
+        try:
+            from src import cpu_bench
+            from src.shiftgcn_np import ShiftGCN
+            d = os.path.join(PROJECT_DIR, "model_classify")
+            npz = sorted(f for f in os.listdir(d) if f.endswith(".npz") and not f.endswith("_check.npz"))[0]
+            cpu_net = ShiftGCN.load(os.path.join(d, npz))
+            chk = os.path.join(d, "shiftgcn_npu_check.npz")
+            import numpy as _np
+            clips = _np.load(chk)["clip"] if os.path.isfile(chk) else [_np.zeros((17, 17, 3), _np.float32)]
+            print("Đo tốc độ CPU cho Shift-GCN (vài giây)...")
+            cb = cpu_bench.run(cpu_net, clips)
+            MODEL_INFO.update({"cpu_" + k: v for k, v in cb.items()})
+            print("[cpu_bench] %s" % json.dumps(cb))
+        except Exception as e:
+            print("[cpu_bench] lỗi: %s: %s" % (type(e).__name__, e))
+    fall_last = None
+    next_sample = 0.0
     disp = display.Display() if SHOW_ON_SCREEN else None
 
     server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
@@ -285,9 +530,13 @@ def main():
     print("Model đang dùng: %s" % model_path)
 
     idx, fps_n, fps_t0 = 0, 0, time.time()
+    log_t = time.time()
+    t_loop = time.perf_counter()
     try:
         while not app.need_exit():
+            t_read = time.perf_counter()
             img = cam.read()
+            read_ms = (time.perf_counter() - t_read) * 1000.0
             if img is None:
                 continue
             idx += 1
@@ -309,15 +558,44 @@ def main():
                     except Exception:
                         pass
                 estimator, cam, model_path = open_model()
+                CURRENT_MODEL[0] = model_path
+                MODEL_INFO.clear()
+                MODEL_INFO.update(model_info(model_path, estimator))
+                BENCH.reset()
                 print("Model đang dùng: %s" % model_path)
                 continue
             pose_ms = (time.perf_counter() - t0) * 1000.0
             LATEST.pose_ms = pose_ms
 
+            # ---- phát hiện ngã trên board, lấy mẫu FALL_SAMPLE_FPS (giống main.py nhánh final)
+            # Lịch cố định: mốc kế tiếp = mốc trước + 1/FPS (KHÔNG đặt lại = t, nếu không khoảng cách luôn > 100 ms
+            # vì phải chờ vòng lặp kế tiếp -> chỉ ~7.7 lần/s khi vòng ~49 ms). Trễ quá 1 chu kỳ thì bắt nhịp lại.
+            if det is not None and t >= next_sample:
+                period = 1.0 / FALL_SAMPLE_FPS
+                next_sample = next_sample + period if t - next_sample < period else t + period
+                t_f = time.perf_counter()
+                fpose = flt.smooth(pose) if flt is not None else pose
+                filter_ms = (time.perf_counter() - t_f) * 1000.0
+                res = det.update(fpose)
+                fall_ms = (time.perf_counter() - t_f) * 1000.0
+                ran = res is not None and res["model_ms"] > 0
+                BENCH.add_fall(fall_ms=fall_ms, filter_ms=filter_ms,
+                               model_ms=res["model_ms"] if ran else None,
+                               prep_ms=res["prep_ms"] if ran else None,
+                               post_ms=res["post_ms"] if res is not None else None,
+                               e2e_ms=read_ms + pose_ms + fall_ms)
+                if res is not None and res["label"] and not (fall_last and fall_last["label"]):
+                    BENCH.alerts += 1
+                    print("[NGÃ] %s  P(ngã) = %.2f" % (time.strftime("%H:%M:%S"), res["prob"]))
+                fall_last = res
+
+            t_enc = time.perf_counter()
             if LATEST.clients > 0:                  # không ai xem thì không tốn công nén JPEG
                 jpeg = to_jpeg_bytes(img)          # ảnh SẠCH (chưa vẽ): PC tự vẽ khung xương
                 if jpeg:
-                    LATEST.publish(jpeg, pose_to_json(pose, idx, t, img.width(), img.height(), pose_ms))
+                    LATEST.publish(jpeg, pose_to_json(pose, idx, t, img.width(), img.height(), pose_ms,
+                                                      fall_last))
+            encode_ms = (time.perf_counter() - t_enc) * 1000.0
 
             fps_n += 1
             if t - fps_t0 >= 1.0:
@@ -326,12 +604,40 @@ def main():
                 if ip == "?":
                     ip = local_ip()
 
+            t_disp = time.perf_counter()
             if disp is not None:
-                draw_pose(img, pose)
-                img.draw_string(4, 4, "FPS %.1f  %s" % (LATEST.fps, "person" if pose.valid else "no person"),
-                                color=image.COLOR_WHITE)
-                img.draw_string(4, 22, "maix://%s  (%d client)" % (ip, LATEST.clients), color=image.COLOR_GREEN)
+                if SHOW_SKELETON:
+                    draw_pose(img, pose)
+                    img.draw_string(4, 4, "FPS %.1f  %s" % (LATEST.fps, "person" if pose.valid else "no person"),
+                                    color=image.COLOR_WHITE)
+                    img.draw_string(4, 22, "maix://%s  (%d client)" % (ip, LATEST.clients), color=image.COLOR_GREEN)
+                y = 40 if SHOW_SKELETON else 4
+                if fall_last is not None:
+                    if fall_last["label"]:
+                        img.draw_string(4, y, "NGA! P=%.2f" % fall_last["prob"], color=image.COLOR_RED, scale=1.6)
+                    else:                             # kể cả khi bị cổng tốc độ chặn (nằm xuống chậm) = không ngã
+                        img.draw_string(4, y, "KHONG NGA P=%.2f" % fall_last["prob"], color=image.COLOR_GREEN,
+                                        scale=1.6)
                 disp.show(img)
+            now = time.perf_counter()
+            BENCH.add(pose.valid, read_ms=read_ms, pose_ms=pose_ms, encode_ms=encode_ms,
+                      display_ms=(now - t_disp) * 1000.0, loop_ms=(now - t_loop) * 1000.0)
+            t_loop = now
+            if t - log_t >= 10.0:                   # in số liệu đo ra log mỗi 10 s
+                log_t = t
+                s = BENCH.summary()
+                print("[bench] %d khung | pose %.1f ms (p95 %.1f) | ngã %.1f ms (model %.1f) | "
+                      "camera->quyết định %.1f ms | vòng %.1f ms -> %.1f FPS | "
+                      "RAM tiến trình peak %s MB | RAM hệ thống peak %s / %s MB"
+                      % (s["frames"], s.get("pose_ms_mean", 0), s.get("pose_ms_p95", 0),
+                         s.get("fall_ms_mean", 0), s.get("model_ms_mean", 0), s.get("e2e_ms_mean", 0),
+                         s.get("loop_ms_mean", 0), s.get("fps") or 0, s.get("vm_hwm_mb"),
+                         s.get("mem_used_peak_mb"), s.get("mem_total_mb")))
+                hz = s.get("sample_hz")
+                if hz is not None and hz < 0.9 * FALL_SAMPLE_FPS:
+                    print("[CẢNH BÁO] Bộ phân loại chỉ nhận %.1f khung/s (cần %g): cửa sổ dài %.1f s thay vì %.1f s "
+                          "-> kết quả ngã KHÔNG tin cậy. Tắt SHOW_ON_SCREEN / đóng web đang xem để tăng FPS."
+                          % (hz, FALL_SAMPLE_FPS, 17 / hz, 17 / FALL_SAMPLE_FPS))
     finally:
         server.shutdown()
         estimator.close()

@@ -71,10 +71,19 @@ classifier:                      # bộ phân loại ngã (src/classifier.py) �
       stride_frames: 1           # nhánh final dự đoán mỗi khung
       postprocess:               # thuật toán hậu xử lý của nhánh final (src/fall_postprocess.py); bật thì bỏ qua speed_gate
         enabled: true
-        consec_frames: 1         # CONSEC_FRAMES: số khung liên tiếp P >= threshold để báo NGÃ
+        consec_frames: 1         # số khung liên tiếp P >= threshold (và qua cổng tốc độ) để báo NGÃ (final: 1).
+                                 # KHÔNG để 3: ngã thật trên MaixCAM P chỉ vọt >= 0.8 trong 1-2 khung (0.81, 0.93, 0.52)
+                                 # còn nằm xuống chậm P cao kéo dài -> 3 khung liên tiếp lọc NGƯỢC (bỏ ngã, giữ nằm).
+        speed_gate:              # thêm so với final: chỉ KÍCH HOẠT khi cửa sổ 1.7 s có vai hạ >= shoulder_drop thân/s
+          shoulder_drop: 2.0     # HOẶC thân xoay >= rotation độ/s (src/motion.py). Đo trên data/testsets/v1_lying:
+          rotation: 200          # ngã thật vai hạ >= 2.93, nằm xuống chậm <= 1.42 -> giữ 82/82 video ngã,
+                                 # video sinh hoạt báo nhầm 30 -> 1 / 118. null = tắt (đúng final).
         hold_frames: 10          # HOLD_FRAMES: giữ cảnh báo, chỉ nhả khi người đã đứng thẳng (thân + chân)
         min_valid_ratio: 0.5     # MIN_VALID_RATIO: cửa sổ có < 50% khung thấy người thì giữ P cũ, không dự đoán
         reset_empty_frames: 5    # mất người >= 5 khung liên tiếp -> xóa cửa sổ + trạng thái cảnh báo
+        max_hold_frames: 100     # thêm so với final: đang giữ NGÃ mà P < ngưỡng liên tục 100 khung (10 s) thì nhả,
+                                 # kể cả khi không thấy chân (camera chỉ thấy nửa trên -> bản final kẹt NGÃ mãi).
+                                 # null = đúng hành vi final (chỉ nhả khi thấy người đứng thẳng cả thân + chân)
     models/b1_lstm.pt:
       label: B1 LSTM             # giữ tham số cũ: ngưỡng lưu trong checkpoint, dự đoán mỗi 5 khung
 
